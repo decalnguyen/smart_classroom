@@ -4,56 +4,24 @@ import numpy as np
 from imgbeddings import imgbeddings
 from PIL import Image
 import psycopg2
-import paho.mqtt.client as mqtt 
 import time
-import requests
+
 # Initialize the camera
 cap = cv2.VideoCapture(0)
-
-broker = '192.168.120.88'
-port = 1883 
-topic = "door/request"
-user = "mmtt21-2"
-password = "mmtt212ttmm"
-def mqtt_connection():
-    def on_connect(client, userdata, flags, rc):
-        if rc == 0:
-            print("Connected to broker")
-        else:
-            print("Connection failed")
-    client = mqtt.Client()
-    client.username_pw_set(user, password)
-    client.on_connect = on_connect
-    client.connect(broker, port)
-    return client 
-def publish(client, topic, msg):
-    while True:
-        time.sleep(5)
-        error = client.publish(topic, msg)
-
-        if error[0] == 0:
-            print("Sent '{msg}' to topic '{topic}' ")
-        else: 
-            print("Failed to send message")
-        break
-def Handdle_mqtt_function(msg):
-    client = mqtt_connection()
-    publish(client, topic, msg)
-
 # loading the Haar Cascade algorithm file into alg variable
 alg = "haarcascade_frontalface_default.xml"
 
-# passing the algorithm to OpenCV
+#passing the algorithm to OpenCV
 haar_cascade = cv2.CascadeClassifier(alg)
 
 #loading the image path into file_name variable
-file_name = 'nhattoan.jpg'
+# file_name = 'nhattoan.jpg'
 
-# reading the image
-img = cv2.imread(file_name, 0)
+# # reading the image
+# img = cv2.imread(file_name, 0)
 
-# creating a black and white version of the image
-gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+# # creating a black and white version of the image
+# gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
 # # detecting the faces
 # faces = haar_cascade.detectMultiScale(gray_img, scaleFactor=1.05, minNeighbors=2, minSize=(100, 100))
@@ -113,7 +81,6 @@ while True:
 
         # detecting the faces
         faces = haar_cascade.detectMultiScale(gray_img, scaleFactor=1.05, minNeighbors=2, minSize=(100, 100))
-
         # for each face detected in the image
         for x, y, w, h in faces:
             # crop the image to select only the face
@@ -139,22 +106,14 @@ while True:
         picture = row[0]
         distance = row[1]
 
-        print(distance)
+        print(1)
 
         if distance <= 8:
             print(f"Match found: {picture}")
             msg = bytes("OPEN", 'utf-8')
-            Handdle_mqtt_function(msg)
-           # print("ok")
         else:
             print("Not detect")
-            url = 'http://172.31.11.177:5000/upload'
-            file_path = 'captured_image.jpg'  # Replace with your image path
-
-            with open(file_path, 'rb') as img:
-                files = {'file': img}
-                response = requests.post(url, files=files)
-                print(response.text)
+    
 
     # Break the loop on 'q' key press
     if key == ord('q'):
