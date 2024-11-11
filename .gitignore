@@ -1,0 +1,9 @@
+Images/
+Database/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment directories
+venv/
