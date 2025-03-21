@@ -26,6 +26,15 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("Failed to get database instance:", err)
+	}
+	if err := sqlDB.Ping(); err != nil {
+		log.Fatal("Failed to ping the database:", err)
+	}
+
+	log.Println("Database connection initialized successfully")
 	db.AutoMigrate(&SenSorData{})
 }
 
@@ -58,7 +67,7 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if err := db.Create(&data); err != nil {
+		if err := db.Create(&data).Error; err != nil {
 			log.Printf("Error saving to database: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
 			return
@@ -68,13 +77,14 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"message": "Data received"})
 	})
 	r.GET("/sensor", func(c *gin.Context) {
-		var data []SenSorData
+		var data SenSorData
 		db.Find(&data)
 		c.JSON(http.StatusOK, data)
 	})
 	http.HandleFunc("/sensor", sensorData)
 
 	port := ":8081"
+	r.Run(port)
 	log.Printf("Starting server on port %s", port)
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
