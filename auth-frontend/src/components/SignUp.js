@@ -10,7 +10,7 @@ function SignUp() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await API.post("/signup", { username, password });
+      await API.postForm("/signup", { username, password });
       setMessage("User registered successfully!");
       setError("");
     } catch (err) {

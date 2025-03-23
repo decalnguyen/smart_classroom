@@ -7,7 +7,7 @@ function Login({ onLogin }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const response = await api.post('/login', { username, password });
+      const response = await API.post('/login', { username, password });
       onLogin(response.data);
     } catch (error) {
       setError('Invalid username or password');

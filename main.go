@@ -6,12 +6,14 @@ import (
 	"smart_classroom/db"
 	"smart_classroom/handlers"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	db.InitDB()
 	r := gin.Default()
+	r.Use(cors.Default())
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)
 

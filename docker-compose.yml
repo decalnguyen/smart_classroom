@@ -1,32 +1,40 @@
 version: '3'
-#networks: 
- # iot: 
-  #  internal: true
+networks: 
+  smart_classroom: 
+    driver: bridge
+
 services: 
-  # cv_module:
-  #  restart: always
-  #  container_name: cv_module
-  #  build: .
-  #  networks: 
-  #  - iot
-  # HandleService:
-  #  restart: always
-  #  container_name: HandleService
-  #  build: . /HandleService
-  #  networks:
-  #  - iot
+  auth-frontend:
+    restart: always
+    container_name: auth-frontend
+    build: ./auth-frontend
+    ports:
+      - 3000:3000
+    networks:
+      - smart_classroom
+
+  backend:
+    restart: always
+    container_name: backend
+    build: .
+    ports:
+      - 8081:8081
+    networks:
+      - smart_classroom
+
   postgres:
     restart: always
     container_name: postgres
     build: ./Database 
     environment:
-     PGDATA: /var/lib/postgresql/data/pgdata
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-    - 5432:5432
+      - 5432:5432
     volumes: 
-    - progresDB_data:/var/lib/postgresql/data
-    - ./Database/postgres.conf:/database/config/postgres.conf
-   # networks:
-    #- iot
+      - progresDB_data:/var/lib/postgresql/data
+      - ./Database/postgres.conf:/database/config/postgres.conf
+    networks:
+      - smart_classroom
+
 volumes:
   progresDB_data:
