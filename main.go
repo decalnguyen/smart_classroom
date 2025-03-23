@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type SenSorData struct {
@@ -17,7 +18,14 @@ type SenSorData struct {
 	Humidity    float64 `json:"humidity"`
 }
 
+type User struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`
+    Username string `gorm:"unique" json:"username"`
+    Password string `json:"password"`
+}
+
 var db *gorm.DB
+var r *gin.Default()
 
 func initDB() {
 	dsn := "host=localhost user=nhattoan password=test123 dbname=sensordata port=5432 sslmode=disable "
@@ -35,10 +43,10 @@ func initDB() {
 	}
 
 	log.Println("Database connection initialized successfully")
-	db.AutoMigrate(&SenSorData{})
+	db.AutoMigrate(&SenSorData{}, &User{})
 }
 
-func sensorData(w http.ResponseWriter, r *http.Request) {
+func HandlePostSensorData(c *gin.Context) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
@@ -60,22 +68,7 @@ func sensorData(w http.ResponseWriter, r *http.Request) {
 func main() {
 	initDB()
 	r := gin.Default()
-	r.POST("/sensor", func(c *gin.Context) {
-		var data SenSorData
-		err := c.BindJSON(&data)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if err := db.Create(&data).Error; err != nil {
-			log.Printf("Error saving to database: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
-			return
-		}
-
-		log.Printf("Received sensor data: %+v", data)
-		c.JSON(http.StatusOK, gin.H{"message": "Data received"})
-	})
+	r.POST("/sensor", HandlePostSensorData)
 	r.GET("/sensor", func(c *gin.Context) {
 		var data SenSorData
 		db.Find(&data)
