@@ -19,6 +19,12 @@ func main() {
 
 	r.POST("/sensor", handlers.HandlePostSensorData)
 	r.GET("/sensor", handlers.HandleGetSensorData)
+	r.PUT("/sensor/:device_id", handlers.HandlePutSensorData)
+
+	r.GET("/sensorinf", handlers.HandleGetSensors)
+	r.POST("/sensorinf", handlers.HandlePostSensor)
+	r.PUT("/sensorinf/:device_id", handlers.HandlePutSensor)
+	r.DELETE("/sensorinf/:device_id", handlers.HandleDeleteSensor)
 
 	port := ":8081"
 	r.Run(port)
