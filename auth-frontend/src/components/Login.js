@@ -1,36 +1,15 @@
-import React, { useState } from 'react';
-import API from "../api";
-function Login({ onLogin }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState(null);
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await API.post('/login', { username, password });
-      onLogin(response.data);
-    } catch (error) {
-      setError('Invalid username or password');
-    }
-  };
+import React from 'react';
+const Login = () => {
   return (
-    <form onSubmit={handleSubmit}>
-      {error && <div>{error}</div>}
-      <input
-        type="text"
-        placeholder="Username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-      />
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <button type="submit">Login</button>
-    </form>
+      <form>
+
+      <h1 class="h3 mb-3 fw-normal">Please sign in</h1>
+        <input type="email" class="form-control" placeholder="name@example.com" required/>
+
+        <input type="password" class="form-control" placeholder="Password" required/>
+
+      <button class="btn btn-primary w-100 btn-lg" type="submit">Sign in</button>
+      </form>
   );
 }
-
 export default Login;

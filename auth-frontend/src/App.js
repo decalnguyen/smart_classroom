@@ -2,32 +2,17 @@ import React, { useState } from "react";
 import Login from "./components/Login";
 import SignUp from "./components/SignUp";
 import Dashboard from "./components/Dashboard";
+import Nav from "./components/Nav";
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(
-    !!localStorage.getItem("token") // Check if token exists
-  );
-
-  const handleLogin = () => {
-    setIsLoggedIn(true);
-  };
-
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-  };
-
-  return (
-    <div>
-      {!isLoggedIn ? (
-        <div>
-          <Login onLogin={handleLogin} />
-          <SignUp />
-        </div>
-      ) : (
-        <Dashboard onLogout={handleLogout} />
-      )}
+ return (
+    <div className="App">
+        <Nav />
+      <main class="form-signin">
+        <Login />
+      </main>
     </div>
-  );
+ );
 }
 
 export default App;
