@@ -26,6 +26,23 @@ func main() {
 	r.PUT("/sensorinf/:device_id", handlers.HandlePutSensor)
 	r.DELETE("/sensorinf/:device_id", handlers.HandleDeleteSensor)
 
+	r.GET("/buildings", handlers.HandleGetBuildings)
+	r.POST("/buildings", handlers.HandlePostBuilding)
+	r.PUT("/buildings/:id", handlers.HandlePutBuilding)
+	r.DELETE("/buildings/:id", handlers.HandleDeleteBuilding)
+
+	// Classroom APIs
+	r.GET("/classrooms", handlers.HandleGetClassrooms)
+	r.POST("/classrooms", handlers.HandlePostClassroom)
+	r.PUT("/classrooms/:id", handlers.HandlePutClassroom)
+	r.DELETE("/classrooms/:id", handlers.HandleDeleteClassroom)
+
+	// Student APIs
+	r.GET("/students", handlers.HandleGetStudents)
+	r.POST("/students", handlers.HandlePostStudent)
+	r.PUT("/students/:id", handlers.HandlePutStudent)
+	r.DELETE("/students/:id", handlers.HandleDeleteStudent)
+
 	port := ":8081"
 	r.Run(port)
 	log.Printf("Starting server on port %s", port)
