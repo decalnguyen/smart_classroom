@@ -24,7 +24,10 @@ func HandlePostBuilding(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	if err := db.DB.Create(&building).Error; err != nil {
+	if err := db.DB.Where("building_id = ?", building.BuildingID).First(&models.Building{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Building already exists"})
+		return
+	} else if err := db.DB.Create(&building).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create building"})
 		return
 	}
@@ -73,7 +76,10 @@ func HandlePostClassroom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	if err := db.DB.Create(&classroom).Error; err != nil {
+	if err := db.DB.Where("classroom_id = ?", classroom.ClassroomID).First(&models.Classroom{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Classroom already exists"})
+		return
+	} else if err := db.DB.Create(&classroom).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create classroom"})
 		return
 	}
@@ -122,7 +128,10 @@ func HandlePostStudent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	if err := db.DB.Create(&student).Error; err != nil {
+	if err := db.DB.Where("student_id = ?", student.StudentID).First(&models.Student{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Student already exists"})
+		return
+	} else if err := db.DB.Create(&student).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create student"})
 		return
 	}
