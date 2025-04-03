@@ -5,8 +5,8 @@ const Login = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [redirect, setRedirect] = useState(false);
   const submit = async (e) => {
-    e.preventDefault();
-          const response = await fetch("http://localhost:8081/login", {
+          e.preventDefault();
+          await fetch("http://localhost:8081/login", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

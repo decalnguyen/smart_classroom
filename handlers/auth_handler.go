@@ -9,21 +9,32 @@ import (
 	"smart_classroom/utils"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func SignUp(c *gin.Context) {
-	var user models.User
+	var userInput struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 
-	if err := c.BindJSON(&user); err != nil {
+	if err := c.BindJSON(&userInput); err != nil {
 		log.Printf("Failed to bind JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
-
+	//Hash the password using bcrypt
+	password, _ := bcrypt.GenerateFromPassword([]byte(userInput.Password), bcrypt.DefaultCost)
 	var existingUser models.User
-	if err := db.DB.Where("username = ?", user.Username).First(&existingUser).Error; err == nil {
+	if err := db.DB.Where("username = ?", userInput.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return
+	}
+
+	// Create a new user
+	user := models.User{
+		Username: userInput.Username,
+		Password: password,
 	}
 
 	if err := db.DB.Create(&user).Error; err != nil {
@@ -52,7 +63,7 @@ func Login(c *gin.Context) {
 	}
 
 	// Verify password (in a real app, hash passwords using bcrypt)
-	if user.Password != dbUser.Password {
+	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(user.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
