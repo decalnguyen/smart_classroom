@@ -16,6 +16,7 @@ func main() {
 	r.Use(cors.Default())
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)
+	//r.GET("/user", handlers.ProtectedEndpoint)
 
 	r.POST("/sensor", handlers.HandlePostSensorData)
 	r.GET("/sensor", handlers.HandleGetSensorData)
@@ -43,6 +44,9 @@ func main() {
 	r.PUT("/students/:id", handlers.HandlePutStudent)
 	r.DELETE("/students/:id", handlers.HandleDeleteStudent)
 
+	// r.Use(cors.New(cors.Config{
+	// 	AllowCredentials: true,
+	// }))
 	port := ":8081"
 	r.Run(port)
 	log.Printf("Starting server on port %s", port)

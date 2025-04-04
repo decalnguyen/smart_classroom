@@ -47,33 +47,46 @@ func SignUp(c *gin.Context) {
 }
 
 func Login(c *gin.Context) {
-	var user models.User
+	var userInput struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	var dbUser models.User
 
 	// Parse JSON input
-	if err := c.BindJSON(&user); err != nil {
+	if err := c.BindJSON(&userInput); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
 	// Check if the user exists in the database
-	if err := db.DB.Where("username = ?", user.Username).First(&dbUser).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+	if err := db.DB.Where("username = ?", userInput.Username).First(&dbUser).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username "})
 		return
 	}
 
 	// Verify password (in a real app, hash passwords using bcrypt)
-	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(user.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(userInput.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
 		return
 	}
 
 	// Generate JWT token
-	token, err := utils.GenerateJWT(user.Username)
+	token, err := utils.GenerateJWT(userInput.Username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
+
+	c.SetCookie(
+		"auth_token", // Cookie name
+		token,        // Cookie value (JWT token)
+		3600,         // Max age in seconds (1 hour)
+		"/",          // Path
+		"",           // Domain (empty means default domain)
+		false,        // Secure (set to true if using HTTPS)
+		true,         // HttpOnly (prevents JavaScript access)
+	)
 
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
