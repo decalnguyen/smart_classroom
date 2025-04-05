@@ -1,6 +1,8 @@
 import React, {useState} from 'react';
+import {Navigate} from "react-router-dom";
 
-const Login = ({ onLogin }) => {
+
+const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [redirect, setRedirect] = useState(false);
@@ -17,12 +19,14 @@ const Login = ({ onLogin }) => {
               password,
             }),
           });
-          setRedirect(true);
+        setRedirect(true);
+        
     }
-
-  if (redirect) {
-    return <redirect to="/home" />;
-  }
+    if (redirect) {
+      return <Navigate to="/classrooms"/>;
+    }
+    
+    
   return (
       <form onSubmit={submit}>
 

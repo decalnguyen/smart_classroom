@@ -1,9 +1,10 @@
 package models
 
 type SenSorData struct {
-	DeviceID    string  `gorm:"primaryKey" json:"device_id"`
-	Temperature float64 `json:"temperature"`
-	Humidity    float64 `json:"humidity"`
+	DeviceID   string  `gorm:"primaryKey" json:"device_id"`
+	DeviceType string  `json:"device_type"`
+	Value      float64 `json:"value"`
+	Status     string  `json:"status"`
 }
 
 type Sensor struct {

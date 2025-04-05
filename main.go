@@ -13,14 +13,19 @@ import (
 func main() {
 	db.InitDB()
 	r := gin.Default()
-	r.Use(cors.Default())
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)
 	r.POST("/logout", handlers.Logout)
 	r.GET("/user", handlers.User)
 
 	r.POST("/sensor", handlers.HandlePostSensorData)
-	r.GET("/sensor", handlers.HandleGetSensorData)
+	r.GET("/sensor/:device_id", handlers.HandleGetSensorData)
 	r.PUT("/sensor/:device_id", handlers.HandlePutSensorData)
 
 	r.GET("/sensorinf", handlers.HandleGetSensors)

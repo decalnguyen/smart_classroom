@@ -3,6 +3,7 @@ import Login from "./components/Login";
 import SignUp from "./components/SignUp";
 import Home from "./components/Home";
 import Nav from "./components/Nav";
+import Classrooms from "./components/classrooms";
 import "./App.css";
 import { BrowserRouter, Routes, Route} from "react-router-dom";
 
@@ -16,6 +17,7 @@ function App() {
                   <Route path="/" exact element={<Home />}/>
                   <Route path="/login" element={<Login />}/>
                   <Route path="/signup" element={<SignUp />}/>
+                  <Route path="/classrooms" element={<Classrooms />}/>
                 </Routes>
               </main>
             </BrowserRouter>

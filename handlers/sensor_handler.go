@@ -37,16 +37,17 @@ func HandlePostSensorData(c *gin.Context) {
 }
 
 func HandleGetSensorData(c *gin.Context) {
-	var data []models.SenSorData
+	deviceID := c.Param("device_id")
+	var data models.SenSorData
 
 	// Retrieve all sensor data from the database
-	if err := db.DB.Find(&data).Error; err != nil {
+	if err := db.DB.Where("device_id = ?", deviceID).First(&data).Error; err != nil {
 		log.Printf("Error retrieving data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
 		return
 	}
-
-	c.JSON(http.StatusOK, data)
+	value := data.Value
+	c.JSON(http.StatusOK, value)
 }
 func HandlePutSensorData(c *gin.Context) {
 	deviceID := c.Param("device_id")
@@ -62,8 +63,7 @@ func HandlePutSensorData(c *gin.Context) {
 		log.Printf("Device ID not found: %s", data.DeviceID)
 		return
 	} else {
-		existingData.Temperature = data.Temperature
-		existingData.Humidity = data.Humidity
+		existingData.Value = data.Value
 		if err := db.DB.Save(&data).Error; err != nil {
 			log.Printf("Error updating database: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update data"})
