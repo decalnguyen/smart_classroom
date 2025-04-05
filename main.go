@@ -16,7 +16,8 @@ func main() {
 	r.Use(cors.Default())
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)
-	//r.GET("/user", handlers.ProtectedEndpoint)
+	r.POST("/logout", handlers.Logout)
+	r.GET("/user", handlers.User)
 
 	r.POST("/sensor", handlers.HandlePostSensorData)
 	r.GET("/sensor", handlers.HandleGetSensorData)

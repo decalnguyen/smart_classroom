@@ -90,3 +90,37 @@ func Login(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
+
+func User(c *gin.Context) {
+	// Retrieve the token from the cookie
+	token, err := c.Cookie("auth_token")
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Validate the token
+	username, err := utils.ValidateJWT(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		return
+	}
+
+	// Respond with the authenticated user's information
+	c.JSON(http.StatusOK, gin.H{"message": "Welcome " + username})
+}
+
+func Logout(c *gin.Context) {
+	// Clear the auth_token cookie
+	c.SetCookie(
+		"auth_token", // Cookie name
+		"",           // Empty value to clear the cookie
+		-1,           // Max age set to -1 to delete the cookie
+		"/",          // Path
+		"",           // Domain (empty means default domain)
+		false,        // Secure (set to true if using HTTPS)
+		true,         // Set HttpOnly to true to prevent JavaScript access
+	)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
