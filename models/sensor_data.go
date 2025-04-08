@@ -1,10 +1,13 @@
 package models
 
+import "time"
+
 type SenSorData struct {
-	DeviceID   string  `gorm:"primaryKey" json:"device_id"`
-	DeviceType string  `json:"device_type"`
-	Value      float64 `json:"value"`
-	Status     string  `json:"status"`
+	DeviceID   string    `gorm:"primaryKey" json:"device_id"`
+	DeviceType string    `json:"device_type"`
+	Value      float64   `json:"value"`
+	Status     string    `json:"status"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 type Sensor struct {

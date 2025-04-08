@@ -50,6 +50,12 @@ func main() {
 	r.PUT("/students/:id", handlers.HandlePutStudent)
 	r.DELETE("/students/:id", handlers.HandleDeleteStudent)
 
+	// Teacher APIs
+	r.GET("/teachers", handlers.HandleGetTeachers)
+	r.POST("/teachers", handlers.HandlePostTeacher)
+	r.PUT("/teachers/:id", handlers.HandlePutTeacher)
+	r.DELETE("/teachers/:id", handlers.HandleDeleteTeacher)
+
 	// r.Use(cors.New(cors.Config{
 	// 	AllowCredentials: true,
 	// }))

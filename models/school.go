@@ -29,7 +29,7 @@ type Subject struct {
 type Teacher struct {
 	TeacherID   uint   `gorm:"primaryKey" json:"teacher_id"`
 	TeacherName string `json:"teacher_name"`
-	SubjectID   uint   `json:"subject_id"`
+	Subject     string `json:"subject"`
 }
 
 type ClassroomTeacher struct {

@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"smart_classroom/db"
 	"smart_classroom/models"
@@ -18,18 +19,11 @@ func HandlePostSensorData(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-
-	if err := db.DB.Where("device_id = ?", data.DeviceID).First(&data).Error; err == nil {
-
-		log.Printf("Device ID already exists: %s", data.DeviceID)
-		c.JSON(http.StatusOK, gin.H{"message": "Data updated"})
+	data.Timestamp = time.Now()
+	if err := db.DB.Create(&data).Error; err != nil {
+		log.Printf("Error saving to database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
 		return
-	} else {
-		if err := db.DB.Create(&data).Error; err != nil {
-			log.Printf("Error saving to database: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
-			return
-		}
 	}
 
 	log.Printf("Received sensor data: %+v", data)
@@ -38,16 +32,15 @@ func HandlePostSensorData(c *gin.Context) {
 
 func HandleGetSensorData(c *gin.Context) {
 	deviceID := c.Param("device_id")
-	var data models.SenSorData
+	var data []models.SenSorData
 
 	// Retrieve all sensor data from the database
-	if err := db.DB.Where("device_id = ?", deviceID).First(&data).Error; err != nil {
+	if err := db.DB.Where("device_id = ?", deviceID).Find(&data).Error; err != nil {
 		log.Printf("Error retrieving data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
 		return
 	}
-	value := data.Value
-	c.JSON(http.StatusOK, value)
+	c.JSON(http.StatusOK, data)
 }
 func HandlePutSensorData(c *gin.Context) {
 	deviceID := c.Param("device_id")

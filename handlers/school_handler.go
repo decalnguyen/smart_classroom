@@ -164,3 +164,54 @@ func HandleDeleteStudent(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Student deleted"})
 }
+func HandleGetTeachers(c *gin.Context) {
+	var teachers []models.Teacher
+	if err := db.DB.Find(&teachers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve teachers"})
+		return
+	}
+	c.JSON(http.StatusOK, teachers)
+}
+
+func HandlePostTeacher(c *gin.Context) {
+	var teacher models.Teacher
+	if err := c.BindJSON(&teacher); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	if err := db.DB.Where("teacher_id = ?", teacher.TeacherID).First(&models.Teacher{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Teacher already exists"})
+		return
+	} else if err := db.DB.Create(&teacher).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create teacher"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Teacher created"})
+}
+
+func HandlePutTeacher(c *gin.Context) {
+	id := c.Param("id")
+	var teacher models.Teacher
+	if err := db.DB.Where("teacher_id = ?", id).First(&teacher).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Teacher not found"})
+		return
+	}
+	if err := c.BindJSON(&teacher); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	if err := db.DB.Save(&teacher).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update teacher"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Teacher updated"})
+}
+
+func HandleDeleteTeacher(c *gin.Context) {
+	id := c.Param("id")
+	if err := db.DB.Where("teacher_id = ?", id).Delete(&models.Teacher{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete teacher"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Teacher deleted"})
+}

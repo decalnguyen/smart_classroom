@@ -24,12 +24,15 @@ ChartJS.register(
 
 const Classroom = () => {
   const [sensorData, setSensorData] = useState([]);
-  const [sensorStatus, setSensorStatus] = useState("");
+  const [sensorStatus, setSensorStatus] = useState("Loading...");
+  const [students, setStudents] = useState([]);
+  const [teacher, setTeacher] = useState(""); // State for teacher information
 
   useEffect(() => {
+    // Fetch sensor data
     const fetchSensorData = async () => {
       try {
-        const response = await fetch("http://localhost:8081/sensor/sensor1", {
+        const response = await fetch("http://localhost:8081/sensor/sensor3", {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -42,25 +45,66 @@ const Classroom = () => {
         }
 
         const data = await response.json();
-        setSensorData(data);
+        console.log("Fetched Sensor Data:", data);
 
-        const isSensorActive = data.some((sensor) => sensor.status === "active");
-        setSensorStatus(isSensorActive ? "Active" : "Inactive");
+        // Ensure data is an array
+        if (Array.isArray(data)) {
+          setSensorData(data);
+          const isSensorActive = data.some((sensor) => sensor.status === "active");
+          setSensorStatus(isSensorActive ? "Active" : "Inactive");
+        } else {
+          console.error("API response is not an array");
+          setSensorData([]);
+          setSensorStatus("Error fetching data");
+        }
       } catch (error) {
         console.error("Error fetching sensor data:", error);
+        setSensorData([]);
         setSensorStatus("Error fetching data");
       }
     };
 
+    // Fetch teacher data
+    const fetchTeacherData = async () => {
+      try {
+        const response = await fetch("http://localhost:8081/teachers", {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch teacher data");
+        }
+
+        const teacher = await response.json();
+        console.log("Fetched Teacher Data:", teacher);
+        setTeacher(teacher);
+      } catch (error) {
+        console.error("Error fetching teacher data:", error);
+        setTeacher(null);
+      }
+    };
+
+    // Fetch data initially
     fetchSensorData();
+    fetchTeacherData();
+
+    // Set up polling to fetch sensor data every 5 seconds
+    const interval = setInterval(fetchSensorData, 5000);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(interval);
   }, []);
 
   const chartData = {
-    labels: sensorData.map((sensor) => sensor.timestamp),
+    labels: sensorData.map((sensor) => new Date(sensor.timestamp).toLocaleTimeString()), // Format timestamps for the X-axis
     datasets: [
       {
         label: "Sensor Readings",
-        data: sensorData.map((sensor) => sensor.value),
+        data: sensorData.map((sensor) => sensor.value), // Map sensor values for the Y-axis
         borderColor: "rgba(75, 192, 192, 1)",
         backgroundColor: "rgba(75, 192, 192, 0.2)",
         fill: true,
@@ -78,14 +122,48 @@ const Classroom = () => {
     },
   };
 
+  if (sensorData.length === 0) {
+    return <h2>No sensor data available</h2>;
+  }
+
   return (
     <div className="classroom-page">
-      <h1>Classroom Sensor Dashboard</h1>
-      <div className="sensor-status">
-        <h2>Sensor Status: {sensorStatus}</h2>
+      <h1>Classroom Dashboard</h1>
+
+      {/* Teacher Information Section */}
+      <div className="teacher-section">
+        <h2>Teacher Information</h2>
+        {teacher ? (
+          <div>
+            <p><strong>Name:</strong> {teacher.teacher_name}</p>
+            <p><strong>Subject:</strong> {teacher.subject}</p>
+          </div>
+        ) : (
+          <p>Loading teacher information...</p>
+        )}
       </div>
-      <div className="sensor-chart">
-        <Line data={chartData} options={chartOptions} />
+
+      {/* Sensor Data Section */}
+      <div className="sensor-section">
+        <h2>Sensor Data</h2>
+        <div className="sensor-status">
+          <h3>Sensor Status: {sensorStatus}</h3>
+        </div>
+        <div className="sensor-chart">
+          <Line data={chartData} options={chartOptions} />
+        </div>
+      </div>
+
+      {/* Student Data Section */}
+      <div className="student-section">
+        <h2>Students in Classroom</h2>
+        <ul>
+          {students.map((student) => (
+            <li key={student.id}>
+              {student.name} - {student.status}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
