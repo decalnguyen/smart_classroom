@@ -59,6 +59,7 @@ func main() {
 	// r.Use(cors.New(cors.Config{
 	// 	AllowCredentials: true,
 	// }))
+	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)
 	log.Printf("Starting server on port %s", port)

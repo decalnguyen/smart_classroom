@@ -11,6 +11,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func SensorChecker() {
+	go func() {
+		for {
+			CheckSensorStatus()
+			time.Sleep(10 * time.Second)
+		}
+	}()
+}
+func CheckSensorStatus() {
+	var sensors []models.Sensor
+
+	// Fetch all sensors from the database
+	if err := db.DB.Find(&sensors).Error; err != nil {
+		log.Printf("Error fetching sensors: %v", err)
+		return
+	}
+
+	// Check each sensor's last activity
+	for _, sensor := range sensors {
+		if time.Since(sensor.Timestamp) > 5*time.Minute { // Threshold: 5 minutes
+			// Update the sensor's status to "inactive" in the Sensor table
+			if err := db.DB.Model(&sensor).Where("status = ?", "Active").Update("status", "Inactive").Error; err != nil {
+				log.Printf("Error updating sensor status for device_id %s: %v", sensor.DeviceID, err)
+			} else {
+				log.Printf("Sensor %s marked as inactive in Sensor table", sensor.DeviceID)
+
+				// Update the corresponding sensor's status in the SenSorData table
+				if err := db.DB.Model(&models.SenSorData{}).Where("device_id = ?", sensor.DeviceID).Update("status", "inactive").Error; err != nil {
+					log.Printf("Error updating sensor data status for device_id %s: %v", sensor.DeviceID, err)
+				} else {
+					log.Printf("Sensor %s marked as inactive in SenSorData table", sensor.DeviceID)
+				}
+			}
+		}
+	}
+}
 func HandlePostSensorData(c *gin.Context) {
 	var data models.SenSorData
 
@@ -21,6 +57,14 @@ func HandlePostSensorData(c *gin.Context) {
 	}
 	data.Timestamp = time.Now()
 	if err := db.DB.Create(&data).Error; err != nil {
+		if err := db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
+			Updates(map[string]interface{}{
+				"timestamp": time.Now(),
+				"status":    "Active",
+			}).Error; err != nil {
+			log.Printf("Error updating sensor timestamp: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update timestamp"})
+		}
 		log.Printf("Error saving to database: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
 		return
@@ -86,6 +130,7 @@ func HandlePostSensor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	sensor.Timestamp = time.Now()
 	if err := db.DB.Where("device_id = ?", sensor.DeviceID).First(&sensor).Error; err == nil {
 		log.Printf("Device ID already exists: %s", sensor.DeviceID)
 		c.JSON(http.StatusOK, gin.H{"message": "Sensor already exists"})

@@ -74,14 +74,15 @@ const Classroom = () => {
           },
           credentials: "include",
         });
-
+    
         if (!response.ok) {
           throw new Error("Failed to fetch teacher data");
         }
-
-        const teacher = await response.json();
-        console.log("Fetched Teacher Data:", teacher);
-        setTeacher(teacher);
+    
+        const teacherData = await response.json();
+        console.log("Fetched Teacher Data:", teacherData); // Debugging log
+        setTeacher(teacherData);
+        console.log("Updated Teacher State:", teacherData); // Debugging log
       } catch (error) {
         console.error("Error fetching teacher data:", error);
         setTeacher(null);
@@ -99,12 +100,18 @@ const Classroom = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Filter sensor data to include only 5-minute intervals
+  const filteredSensorData = sensorData.filter((sensor) => {
+    const timestamp = new Date(sensor.timestamp);
+    return timestamp.getMinutes() % 5 === 0; // Include only timestamps divisible by 5 minutes
+  });
+
   const chartData = {
-    labels: sensorData.map((sensor) => new Date(sensor.timestamp).toLocaleTimeString()), // Format timestamps for the X-axis
+    labels: filteredSensorData.map((sensor) => new Date(sensor.timestamp).toLocaleTimeString()), // Format timestamps for the X-axis
     datasets: [
       {
         label: "Sensor Readings",
-        data: sensorData.map((sensor) => sensor.value), // Map sensor values for the Y-axis
+        data: filteredSensorData.map((sensor) => sensor.value), // Map sensor values for the Y-axis
         borderColor: "rgba(75, 192, 192, 1)",
         backgroundColor: "rgba(75, 192, 192, 0.2)",
         fill: true,
@@ -135,8 +142,8 @@ const Classroom = () => {
         <h2>Teacher Information</h2>
         {teacher ? (
           <div>
-            <p><strong>Name:</strong> {teacher.teacher_name}</p>
-            <p><strong>Subject:</strong> {teacher.subject}</p>
+            <p><strong>Name:</strong> {teacher[0].teacher_name}</p>
+            <p><strong>Subject:</strong> {teacher[0].subject}</p>
           </div>
         ) : (
           <p>Loading teacher information...</p>
@@ -154,17 +161,6 @@ const Classroom = () => {
         </div>
       </div>
 
-      {/* Student Data Section */}
-      <div className="student-section">
-        <h2>Students in Classroom</h2>
-        <ul>
-          {students.map((student) => (
-            <li key={student.id}>
-              {student.name} - {student.status}
-            </li>
-          ))}
-        </ul>
-      </div>
     </div>
   );
 };
