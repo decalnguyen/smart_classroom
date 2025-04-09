@@ -23,7 +23,7 @@ func CheckSensorStatus() {
 	var sensors []models.Sensor
 
 	// Fetch all sensors from the database
-	if err := db.DB.Find(&sensors).Error; err != nil {
+	if err := db.DB.Where("status = ?", "Activate").Find(&sensors).Error; err != nil {
 		log.Printf("Error fetching sensors: %v", err)
 		return
 	}
