@@ -5,6 +5,7 @@ import (
 
 	"smart_classroom/db"
 	"smart_classroom/models"
+	"smart_classroom/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -214,4 +215,102 @@ func HandleDeleteTeacher(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Teacher deleted"})
+}
+func HandleGetSchedules(c *gin.Context) {
+	// Extract user ID from JWT
+	token := c.GetHeader("Authorization")
+	userID, err := utils.ValidateJWT(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+		return
+	}
+
+	var schedules []models.Schedule
+	if err := db.DB.Where("user_id = ?", userID).Find(&schedules).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve schedules"})
+		return
+	}
+
+	c.JSON(http.StatusOK, schedules)
+}
+
+// HandlePostSchedule adds a new schedule for the authenticated user
+func HandlePostSchedule(c *gin.Context) {
+	// Extract user ID from JWT
+	token := c.GetHeader("Authorization")
+	userID, err := utils.ValidateJWT(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+		return
+	}
+
+	var schedule models.Schedule
+	if err := c.BindJSON(&schedule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	// Set the user ID for the schedule
+	schedule.UserID = userID
+
+	if err := db.DB.Create(&schedule).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create schedule"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Schedule created"})
+}
+
+// HandlePutSchedule updates an existing schedule by ID for the authenticated user
+func HandlePutSchedule(c *gin.Context) {
+	// Extract user ID from JWT
+	token := c.GetHeader("Authorization")
+	userID, err := utils.ValidateJWT(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+		return
+	}
+
+	id := c.Param("id")
+	var schedule models.Schedule
+
+	// Find the schedule by ID and user ID
+	if err := db.DB.Where("id = ? AND user_id = ?", id, userID).First(&schedule).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Schedule not found"})
+		return
+	}
+
+	// Parse the updated data
+	if err := c.BindJSON(&schedule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	if err := db.DB.Save(&schedule).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update schedule"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Schedule updated"})
+}
+
+// HandleDeleteSchedule deletes a schedule by ID for the authenticated user
+func HandleDeleteSchedule(c *gin.Context) {
+	// Extract user ID from JWT
+	token := c.GetHeader("Authorization")
+	userID, err := utils.ValidateJWT(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+		return
+	}
+
+	id := c.Param("id")
+
+	// Delete the schedule by ID and user ID
+	if err := db.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Schedule{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete schedule"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Schedule deleted"})
 }

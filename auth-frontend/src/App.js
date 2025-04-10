@@ -4,6 +4,7 @@ import SignUp from "./components/SignUp";
 import Home from "./components/Home";
 import Nav from "./components/Nav";
 import Classrooms from "./components/classrooms";
+import CalendarComponent from "./components/Calendar";
 import "./App.css";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 
@@ -20,6 +21,7 @@ function AppContent() {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<SignUp />} />
           <Route path="/classrooms" element={<Classrooms />} />
+          <Route path="/calendar" element={<CalendarComponent />} />
         </Routes>
       </main>
     </div>

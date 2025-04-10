@@ -69,26 +69,27 @@ func Login(c *gin.Context) {
 	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(userInput.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
 		return
+	} else {
+		// Generate JWT token
+		token, err := utils.GenerateJWT(dbUser.ID, dbUser.Role)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+			return
+		}
+
+		c.SetCookie(
+			"auth_token", // Cookie name
+			token,        // Cookie value (JWT token)
+			3600,         // Max age in seconds (1 hour)
+			"/",          // Path
+			"",           // Domain (empty means default domain)
+			false,        // Secure (set to true if using HTTPS)
+			true,         // HttpOnly (prevents JavaScript access)
+		)
+
+		c.JSON(http.StatusOK, gin.H{"token": token})
 	}
 
-	// Generate JWT token
-	token, err := utils.GenerateJWT(userInput.Username)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
-	}
-
-	c.SetCookie(
-		"auth_token", // Cookie name
-		token,        // Cookie value (JWT token)
-		3600,         // Max age in seconds (1 hour)
-		"/",          // Path
-		"",           // Domain (empty means default domain)
-		false,        // Secure (set to true if using HTTPS)
-		true,         // HttpOnly (prevents JavaScript access)
-	)
-
-	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
 func User(c *gin.Context) {

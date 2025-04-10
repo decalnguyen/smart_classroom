@@ -56,9 +56,12 @@ func main() {
 	r.PUT("/teachers/:id", handlers.HandlePutTeacher)
 	r.DELETE("/teachers/:id", handlers.HandleDeleteTeacher)
 
-	// r.Use(cors.New(cors.Config{
-	// 	AllowCredentials: true,
-	// }))
+	// Schedule routes
+	r.GET("/schedules", handlers.HandleGetSchedules)
+	r.POST("/schedules", handlers.HandlePostSchedule)
+	r.PUT("/schedules/:id", handlers.HandlePutSchedule)
+	r.DELETE("/schedules/:id", handlers.HandleDeleteSchedule)
+
 	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)

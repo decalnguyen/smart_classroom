@@ -32,3 +32,46 @@
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
+
+.calendar-container {
+  margin: 20px auto;
+  max-width: 800px;
+  text-align: center;
+}
+
+/* Adjust the weekly grid to have a larger width */
+/* Adjust the weekly grid to have a larger width */
+.weekly-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr); /* 7 columns for each day of the week */
+  gap: 1rem;
+  width: 100%; /* Use full width of the container */
+  max-width: 1600px; /* Increase the maximum width */
+  padding: 1rem; /* Add padding for better spacing */
+}
+
+/* Adjust the container for horizontal scrolling */
+.scroll-x {
+  overflow-x: auto;
+  padding: 1rem; /* Add padding for better spacing */
+  width: 1800px;
+  display: flex; /* Use Flexbox */
+  justify-content: center;
+}
+
+/* Adjust individual day cards in the weekly grid */
+.weekly-grid > div {
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  min-height: 150px; /* Ensure consistent height */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Add styles for the calendar container */
+.calendar-container {
+  margin: 20px auto;
+  max-width: 1200px; /* Increase the width of the calendar */
+  text-align: center;
+}
