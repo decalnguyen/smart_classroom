@@ -1,9 +1,6 @@
 import React from "react";
 import Login from "./components/Login";
 import SignUp from "./components/SignUp";
-import Home from "./components/Home";
-import Nav from "./components/Nav";
-import Classrooms from "./components/classrooms";
 import CalendarComponent from "./components/Calendar";
 import "./App.css";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
@@ -12,6 +9,15 @@ import { CssBaseline, ThemeProvider } from "@mui/material";
 import Topbar from "./components/global/Topbar";  
 import Sidebar from "./components/global/Sidebar";
 import Dashboard from "./components/dashboard/dashboard";
+import Team from "./components/team/team";
+// import Contacts from "./components/contacts";
+// import Invoices from "./components/invoices";
+// import Form from "./components/form";
+// import FAQ from "./components/faq";
+// import Bar from "./components/bar";
+// import Pie from "./components/pie";
+// import Line from "./components/line";
+
 function AppContent() {
   const location = useLocation(); // Now inside BrowserRouter context
   const [theme, colorMode] = useMode();
@@ -19,18 +25,18 @@ function AppContent() {
     <ColorModeContext.Provider value={colorMode}>
       <ThemeProvider theme={theme}> 
         <CssBaseline />
-        {/* Add a button to toggle between light and dark mode */}
         <div className="app">
-          {/* Conditionally render Nav based on the current path */}
+          <Sidebar />
           <main className="content">
             <Topbar />
             <Routes>
               <Route path="/" exact element={<Dashboard />} />
+              <Route path="/Team" element={<Team />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
               <Route path="/calendar" element={<CalendarComponent />} />
             </Routes>
-            <Sidebar />
+
           </main>
         </div>
       </ThemeProvider>
