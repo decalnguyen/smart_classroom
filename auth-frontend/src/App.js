@@ -9,7 +9,9 @@ import "./App.css";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ColorModeContext, useMode } from "./theme";  
 import { CssBaseline, ThemeProvider } from "@mui/material";
-import Topbar from "./components/global/Topbar";
+import Topbar from "./components/global/Topbar";  
+import Sidebar from "./components/global/Sidebar";
+import Dashboard from "./components/dashboard/dashboard";
 function AppContent() {
   const location = useLocation(); // Now inside BrowserRouter context
   const [theme, colorMode] = useMode();
@@ -20,15 +22,15 @@ function AppContent() {
         {/* Add a button to toggle between light and dark mode */}
         <div className="app">
           {/* Conditionally render Nav based on the current path */}
-          {location.pathname !== "/classrooms" && <Nav />}
           <main className="content">
+            <Topbar />
             <Routes>
-              <Route path="/" exact element={<Home />} />
+              <Route path="/" exact element={<Dashboard />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
-              <Route path="/classrooms" element={<Classrooms />} />
               <Route path="/calendar" element={<CalendarComponent />} />
             </Routes>
+            <Sidebar />
           </main>
         </div>
       </ThemeProvider>
