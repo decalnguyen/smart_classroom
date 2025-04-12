@@ -7,7 +7,7 @@ import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import NotificationsNoneOutlinedIcon from "@mui/icons-material/NotificationsNoneOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import SearchIcon from "@mui/icons-material/Search";
-import PersonOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import PersonOutlinedIcon from "@mui/icons-material/PersonOutlined";
 
 const Topbar = () => {
     const theme = useTheme();
@@ -16,7 +16,7 @@ const Topbar = () => {
      
 
     return (
-        <Box display="flex" justifyContent="space-between" p={2}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" p={2}>
             {/* Search Bar */}
             <Box display="flex" 
                 backgroundColor={colors.primary[400]} 
@@ -25,10 +25,10 @@ const Topbar = () => {
                 <IconButton type="button" sx={{p: 1}}> 
                     <SearchIcon/>
                 </IconButton>
-        </Box>
+            </Box>
 
         {/* Icons */}
-        <Box display="flex">
+        <Box display="flex" ml="2000px" >
             <IconButton onClick={colorMode.toggleColorMode}>
                 {theme.palette.mode === "dark" ? (
                     <DarkModeOutlinedIcon />
@@ -46,6 +46,7 @@ const Topbar = () => {
                 <PersonOutlinedIcon />
             </IconButton>
         </Box>
-    </Box>); 
-}
+    </Box>
+); 
+};
 export default Topbar;

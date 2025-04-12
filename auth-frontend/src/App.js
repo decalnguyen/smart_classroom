@@ -9,7 +9,7 @@ import { CssBaseline, ThemeProvider } from "@mui/material";
 import Topbar from "./components/global/Topbar";  
 import Sidebar from "./components/global/Sidebar";
 import Dashboard from "./components/dashboard/dashboard";
-import Team from "./components/team/team";
+import Student from "./components/student/student";
 // import Contacts from "./components/contacts";
 // import Invoices from "./components/invoices";
 // import Form from "./components/form";
@@ -30,8 +30,8 @@ function AppContent() {
           <main className="content">
             <Topbar />
             <Routes>
-              <Route path="/" exact element={<Dashboard />} />
-              <Route path="/Team" element={<Team />} />
+              <Route path="/dashboard" exact element={<Dashboard />} />
+              <Route path="/students" element={<Student />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
               <Route path="/calendar" element={<CalendarComponent />} />

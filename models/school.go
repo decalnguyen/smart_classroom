@@ -18,9 +18,12 @@ type Classroom struct {
 type Student struct {
 	StudentID   uint   `gorm:"primaryKey" json:"student_id"`
 	StudentName string `json:"student_name"`
-	ClassroomID uint   `json:"classroom_id"`
-	FaceID      string `json:"face_id"`
-	Photo       string `json:"photo"`
+	Age         int    `json:"age"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+	// Username   string `json:"username"`
+	// FaceID      string `json:"face_id"`
+	// Photo       string `json:"photo"`
 }
 
 type Subject struct {
