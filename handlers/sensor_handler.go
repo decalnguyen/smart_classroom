@@ -183,3 +183,59 @@ func HandleDeleteSensor(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Sensor deleted"})
 }
+func HandleGetElectricity(c *gin.Context) {
+	var electricityRecords []models.Electricity
+	if err := db.DB.Find(&electricityRecords).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve electricity records"})
+		return
+	}
+	c.JSON(http.StatusOK, electricityRecords)
+}
+func HandlePostElectricity(c *gin.Context) {
+	var electricity models.Electricity
+	if err := c.ShouldBindJSON(&electricity); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	if err := db.DB.Create(&electricity).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create electricity record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Electricity record created", "electricity": electricity})
+}
+func HandlePutElectricity(c *gin.Context) {
+	id := c.Param("id")
+	var electricity models.Electricity
+
+	// Find the electricity record by ID
+	if err := db.DB.First(&electricity, "electricity_id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Electricity record not found"})
+		return
+	}
+
+	// Parse the updated data
+	if err := c.ShouldBindJSON(&electricity); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	if err := db.DB.Save(&electricity).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update electricity record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Electricity record updated", "electricity": electricity})
+}
+func HandleDeleteElectricity(c *gin.Context) {
+	id := c.Param("id")
+
+	// Delete the electricity record by ID
+	if err := db.DB.Delete(&models.Electricity{}, "electricity_id = ?", id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete electricity record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Electricity record deleted"})
+}

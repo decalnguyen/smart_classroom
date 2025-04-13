@@ -1,7 +1,7 @@
 import React from "react";
 import Login from "./components/Login";
 import SignUp from "./components/SignUp";
-import CalendarComponent from "./components/Calendar";
+import Calendar from "./components/calendar/calendar";
 import "./App.css";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ColorModeContext, useMode } from "./theme";  
@@ -16,6 +16,7 @@ import Attandance from "./components/attandance/attandance";
 // import Form from "./components/form";
 // import FAQ from "./components/faq";
 // import Bar from "./components/bar";
+import BarChart from "./components/charts/BarChart";
 // import Pie from "./components/pie";
 // import Line from "./components/line";
 
@@ -36,7 +37,9 @@ function AppContent() {
               <Route path="/attandance" element={<Attandance />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
-              <Route path="/calendar" element={<CalendarComponent />} />
+              <Route path="/calendar" element={<Calendar/>} />
+              <Route path="/barchart" element={<BarChart />} />
+
             </Routes>
 
           </main>

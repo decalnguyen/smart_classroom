@@ -7,7 +7,8 @@ import { Box,
     useTheme } from "@mui/material";
 import { tokens } from "../../theme";
 import Header from "../Header";
-import FullCalendar, {formatDate} from "@fullcalendar/react";
+import FullCalendar from "@fullcalendar/react";
+import {formatDate} from "@fullcalendar/core";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction"; // needed for dayClick
@@ -82,6 +83,7 @@ const Calendar = () => {
                         ]}
                         select={handleDateClick}
                         eventClick={handleEventClick}
+                        eventsSet={(events) => setCurrentEvents(events)} 
                     />
                 </Box>
             </Box>

@@ -67,7 +67,12 @@ func main() {
 	r.POST("/attendance", handlers.HandlePostAttendance)
 	r.PUT("/attendance/:id", handlers.HandlePutAttendance)
 	r.DELETE("/attendance/:id", handlers.HandleDeleteAttendance)
-
+	//
+	//Electricity routes
+	r.GET("/electricity", handlers.HandleGetElectricity)
+	r.POST("/electricity", handlers.HandlePostElectricity)
+	r.PUT("/electricity/:id", handlers.HandlePutElectricity)
+	r.DELETE("/electricity/:id", handlers.HandleDeleteElectricity)
 	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)
