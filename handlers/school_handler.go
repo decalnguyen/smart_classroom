@@ -314,3 +314,28 @@ func HandleDeleteSchedule(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Schedule deleted"})
 }
+
+func HandleGetAttendance(c *gin.Context) {
+	var attendance []models.Attendance
+	if err := db.DB.Find(&attendance).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve attendance records"})
+		return
+	}
+	c.JSON(http.StatusOK, attendance)
+}
+func HandlePostAttendance(c *gin.Context) {
+	var attendance models.Attendance
+	if err := c.BindJSON(&attendance); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	if err := db.DB.Where("student_id = ? AND class_id = ?", attendance.StudentID, attendance.ClassroomID).First(&models.Attendance{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Attendance record already exists"})
+		return
+	} else if err := db.DB.Create(&attendance).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create attendance record"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
+}

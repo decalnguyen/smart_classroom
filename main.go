@@ -62,6 +62,12 @@ func main() {
 	r.PUT("/schedules/:id", handlers.HandlePutSchedule)
 	r.DELETE("/schedules/:id", handlers.HandleDeleteSchedule)
 
+	//Attandace routes
+	r.GET("/attendance", handlers.HandleGetAttendance)
+	r.POST("/attendance", handlers.HandlePostAttendance)
+	r.PUT("/attendance/:id", handlers.HandlePutAttendance)
+	r.DELETE("/attendance/:id", handlers.HandleDeleteAttendance)
+
 	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)

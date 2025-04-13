@@ -5,7 +5,7 @@ import {DataGrid, GridToolbar} from "@mui/x-data-grid";
 import { useState, useEffect } from "react";
 
 
-const Team = () => {
+const Attandance = () => {
     const theme = useTheme();
     const colors = tokens(theme.palette.mode);
 
@@ -83,11 +83,11 @@ const Team = () => {
                >
                 <DataGrid rows={students} 
                 columns={columns} 
-                components={{ Toolbar: GridToolbar }}
                 getRowId={(row) => row.student_id} 
+                components={{ Toolbar: GridToolbar }}
                 />
             </Box>
         </Box> 
     )
 }
-export default Team;
+export default Attandance;

@@ -10,6 +10,7 @@ import Topbar from "./components/global/Topbar";
 import Sidebar from "./components/global/Sidebar";
 import Dashboard from "./components/dashboard/dashboard";
 import Student from "./components/student/student";
+import Attandance from "./components/attandance/attandance";
 // import Contacts from "./components/contacts";
 // import Invoices from "./components/invoices";
 // import Form from "./components/form";
@@ -32,6 +33,7 @@ function AppContent() {
             <Routes>
               <Route path="/dashboard" exact element={<Dashboard />} />
               <Route path="/students" element={<Student />} />
+              <Route path="/attandance" element={<Attandance />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
               <Route path="/calendar" element={<CalendarComponent />} />
