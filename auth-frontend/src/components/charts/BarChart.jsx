@@ -11,32 +11,53 @@ const BarChart = () => {
     useEffect(() => {
             const fetchElectricityData = async () => {
                 try {
-                  const response = await fetch("http://localhost:8081/electricity", {
+                  const endpoints = [
+                    { key: "Humidity Sensor", url: "http://localhost:8081/electricity?id=2&type=Humidity" },
+                    { key: "Temperature Sensor", url: "http://localhost:8081/electricity?id=1&type=temperature" },
+                    { key: "Light Sensor", url: "http://localhost:8081/electricity?id=3&type=light" },
+                    { key: "Fan", url: "http://localhost:8081/electricity?id=4&type=fan" },
+                    { key: "Conditioner", url: "http://localhost:8081/electricity?id=5&type=conditioner" },
+                    { key: "Projector", url: "http://localhost:8081/electricity?id=6&type=projector" },
+                 ];
+                  const response = await Promise.all(
+                    endpoints.map((endpoint) => 
+                    fetch(endpoint.url, {
                     method: "GET",
                     headers: {
                       "Content-Type": "application/json",
                     },
                     credentials: "include",
-                  });
-          
-                  if (!response.ok) {
-                    throw new Error("Failed to fetch electricity data");
-                  }
-          
-                  const data = await response.json();
-                  console.log("Fetched Electricity Data:", data);
-          
-                  // Ensure data is an array
-                  if (Array.isArray(data)) {
-                    setData(data);
-                    console.log("Updated Electricity State:", data); // Debugging log
-                  } 
-                }catch (error) {
-                    console.error("Error fetching Electricity data:", error);
-                    setData([]);
-                    console.log("Error fetching Electricity data:", error); // Debugging log
-                }
-            };
+                  }).then((res) => {
+                    if (!res.ok) {
+                        throw new Error(`Failed to fetch ${endpoint.key} data`);
+                    }
+                    return res.json().then((data) => ({
+                        key: endpoint.key,
+                        data // Assuming the response has a 'value' field
+                    }));
+                    }))
+                    );
+                    console.log("API Responses:", response);
+                    const combinedData = response.reduce((acc, { key, data }) => {
+                        data.forEach((item) => {
+                          const existing = acc.find((entry) => entry.country === item.country);
+                          if (existing) {
+                            existing[key] = item.value;
+                          } else {
+                            acc.push({ country: item.country, [key]: item.value });
+                          }
+                        });
+                        return acc;
+                      }, []);
+              
+                      console.log("Combined Data:", combinedData);
+                      setData(combinedData);
+                    } catch (error) {
+                      console.error("Error fetching data:", error);
+                      setData([]);
+                    }
+                  };
+                    
               fetchElectricityData();
             }, []);
     return (
@@ -48,7 +69,7 @@ const BarChart = () => {
             'Light Sensor',
             'Fan',
             'Conditioner',
-            'projector',
+            'Projector',
         ]}
         indexBy="country"
         margin={{ top: 50, right: 130, bottom: 50, left: 60 }}

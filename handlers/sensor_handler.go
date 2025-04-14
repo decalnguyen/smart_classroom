@@ -184,8 +184,10 @@ func HandleDeleteSensor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Sensor deleted"})
 }
 func HandleGetElectricity(c *gin.Context) {
-	var electricityRecords []models.Electricity
-	if err := db.DB.Find(&electricityRecords).Error; err != nil {
+	id := c.Query("id")
+	deviceType := c.Query("type")
+	var electricityRecords models.Electricity
+	if err := db.DB.Where("device_id = ? AND device_type = ?", id, deviceType).First(&electricityRecords).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve electricity records"})
 		return
 	}
@@ -193,16 +195,15 @@ func HandleGetElectricity(c *gin.Context) {
 }
 func HandlePostElectricity(c *gin.Context) {
 	var electricity models.Electricity
-	if err := c.ShouldBindJSON(&electricity); err != nil {
+	if err := c.BindJSON(&electricity); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-
+	electricity.Timestamp = time.Now()
 	if err := db.DB.Create(&electricity).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create electricity record"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "Electricity record created", "electricity": electricity})
 }
 func HandlePutElectricity(c *gin.Context) {

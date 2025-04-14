@@ -234,7 +234,6 @@ func HandleGetSchedules(c *gin.Context) {
 	c.JSON(http.StatusOK, schedules)
 }
 
-// HandlePostSchedule adds a new schedule for the authenticated user
 func HandlePostSchedule(c *gin.Context) {
 	// Extract user ID from JWT
 	token := c.GetHeader("Authorization")
@@ -261,7 +260,6 @@ func HandlePostSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Schedule created"})
 }
 
-// HandlePutSchedule updates an existing schedule by ID for the authenticated user
 func HandlePutSchedule(c *gin.Context) {
 	// Extract user ID from JWT
 	token := c.GetHeader("Authorization")
@@ -293,8 +291,6 @@ func HandlePutSchedule(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Schedule updated"})
 }
-
-// HandleDeleteSchedule deletes a schedule by ID for the authenticated user
 func HandleDeleteSchedule(c *gin.Context) {
 	// Extract user ID from JWT
 	token := c.GetHeader("Authorization")
@@ -338,4 +334,39 @@ func HandlePostAttendance(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
+}
+func HandlePutAttendance(c *gin.Context) {
+	id := c.Param("id")
+	var attendance models.Attendance
+
+	// Find the attendance record by ID
+	if err := db.DB.Where("id = ?", id).First(&attendance).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Attendance record not found"})
+		return
+	}
+
+	// Parse the updated data
+	if err := c.BindJSON(&attendance); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	if err := db.DB.Save(&attendance).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update attendance record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Attendance record updated"})
+}
+
+func HandleDeleteAttendance(c *gin.Context) {
+	id := c.Param("id")
+
+	// Delete the attendance record by ID
+	if err := db.DB.Where("id = ?", id).Delete(&models.Attendance{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete attendance record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Attendance record deleted"})
 }
