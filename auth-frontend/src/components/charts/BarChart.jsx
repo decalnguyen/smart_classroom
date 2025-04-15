@@ -9,58 +9,74 @@ const BarChart = () => {
     
     const [data, setData] = useState([]);
     useEffect(() => {
-            const fetchElectricityData = async () => {
-                try {
-                  const endpoints = [
+        const fetchElectricityData = async () => {
+            try {
+                const endpoints = [
                     { key: "Humidity Sensor", url: "http://localhost:8081/electricity?id=2&type=Humidity" },
                     { key: "Temperature Sensor", url: "http://localhost:8081/electricity?id=1&type=temperature" },
-                    { key: "Light Sensor", url: "http://localhost:8081/electricity?id=3&type=light" },
+                    { key: "Light Sensor", url: "http://localhost:8081/electricity?id=3&type=Light" },
                     { key: "Fan", url: "http://localhost:8081/electricity?id=4&type=fan" },
                     { key: "Conditioner", url: "http://localhost:8081/electricity?id=5&type=conditioner" },
-                    { key: "Projector", url: "http://localhost:8081/electricity?id=6&type=projector" },
-                 ];
-                  const response = await Promise.all(
-                    endpoints.map((endpoint) => 
-                    fetch(endpoint.url, {
-                    method: "GET",
-                    headers: {
-                      "Content-Type": "application/json",
-                    },
-                    credentials: "include",
-                  }).then((res) => {
-                    if (!res.ok) {
-                        throw new Error(`Failed to fetch ${endpoint.key} data`);
-                    }
-                    return res.json().then((data) => ({
-                        key: endpoint.key,
-                        data // Assuming the response has a 'value' field
-                    }));
-                    }))
-                    );
-                    console.log("API Responses:", response);
-                    const combinedData = response.reduce((acc, { key, data }) => {
-                        data.forEach((item) => {
-                          const existing = acc.find((entry) => entry.country === item.country);
-                          if (existing) {
-                            existing[key] = item.value;
-                          } else {
-                            acc.push({ country: item.country, [key]: item.value });
-                          }
-                        });
+                    { key: "Projector", url: "http://localhost:8081/electricity?id=6&type=Projector" },
+                ];
+    
+                const responses = await Promise.all(
+                    endpoints.map((endpoint) =>
+                        fetch(endpoint.url, {
+                            method: "GET",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            credentials: "include",
+                        }).then((res) => {
+                            if (!res.ok) {
+                                throw new Error(`Failed to fetch ${endpoint.key} data`);
+                            }
+                            return res.json().then((data) => ({
+                                key: endpoint.key,
+                                data: Array.isArray(data) ? data : [], // Fallback to an empty array if data is not an array
+                            }));
+                        })
+                    )
+                );
+    
+                console.log("API Responses:", responses);
+    
+                const combinedData = responses.reduce((acc, { key, data }) => {
+                    if (!Array.isArray(data)) {
+                        console.error(`Data for key "${key}" is not an array:`, data);
                         return acc;
-                      }, []);
-              
-                      console.log("Combined Data:", combinedData);
-                      setData(combinedData);
-                    } catch (error) {
-                      console.error("Error fetching data:", error);
-                      setData([]);
                     }
-                  };
-                    
-              fetchElectricityData();
-            }, []);
+    
+                    data.forEach((item) => {
+                        const existing = acc.find((entry) => entry.device_type === item.device_type);
+                        if (existing) {
+                            existing[key] = item.value;
+                        } else {
+                            acc.push({
+                                device_type: item.device_type,
+                                [key]: item.value,
+                                ...Object.fromEntries(
+                                    endpoints.map((e) => [e.key, e.key === key ? item.value : 0])
+                                ),
+                            });
+                        }
+                    });
+                    return acc;
+                }, []);
+    
+                console.log("Combined Data:", combinedData);
+                setData(combinedData);
+            } catch (error) {
+                console.error("Error fetching data:", error);
+                setData([]);
+            }
+        };
+    
+        fetchElectricityData();
+    }, []);
     return (
+        <div style={{ height: "500px", width: "1000px" }}>
         <ResponsiveBar
         data={data}
         keys={[
@@ -71,7 +87,7 @@ const BarChart = () => {
             'Conditioner',
             'Projector',
         ]}
-        indexBy="country"
+        indexBy="device_type"
         margin={{ top: 50, right: 130, bottom: 50, left: 60 }}
         padding={0.3}
         valueScale={{ type: 'linear' }}
@@ -126,7 +142,7 @@ const BarChart = () => {
             tickSize: 5,
             tickPadding: 5,
             tickRotation: 0,
-            legend: 'country',
+            legend: 'Electricity Consumption',
             legendPosition: 'middle',
             legendOffset: 32,
             truncateTickAt: 0
@@ -177,8 +193,9 @@ const BarChart = () => {
         ]}
         role="application"
         ariaLabel="Nivo bar chart demo"
-        barAriaLabel={e=>e.id+": "+e.formattedValue+" in country: "+e.indexValue}
+        barAriaLabel={e=>e.id+": "+e.formattedValue+" in device type: "+e.indexValue}
     />
+    </div>
     );
     }
 export default BarChart;

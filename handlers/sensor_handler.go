@@ -186,12 +186,19 @@ func HandleDeleteSensor(c *gin.Context) {
 func HandleGetElectricity(c *gin.Context) {
 	id := c.Query("id")
 	deviceType := c.Query("type")
-	var electricityRecords models.Electricity
-	if err := db.DB.Where("device_id = ? AND device_type = ?", id, deviceType).First(&electricityRecords).Error; err != nil {
+	var results []struct {
+		DeviceType string  `json:"device_type"`
+		Value      float64 `json:"value"`
+	}
+	if err := db.DB.Table("electricities").
+		Select("device_type, value").
+		Where("device_id = ? AND device_type = ?", id, deviceType).
+		Scan(&results).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve electricity records"})
 		return
 	}
-	c.JSON(http.StatusOK, electricityRecords)
+
+	c.JSON(http.StatusOK, results)
 }
 func HandlePostElectricity(c *gin.Context) {
 	var electricity models.Electricity
