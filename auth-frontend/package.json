@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
     "@fullcalendar/core": "^6.1.17",
@@ -15,6 +16,7 @@
     "@mui/material": "^7.0.2",
     "@mui/x-data-grid": "^7.28.3",
     "@nivo/bar": "^0.88.0",
+    "@nivo/line": "^0.88.0",
     "@nivo/pie": "^0.88.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
