@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"log"
 	"net/http"
 	"time"
 
+	"fmt"
 	"smart_classroom/db"
 	"smart_classroom/models"
 
@@ -246,4 +248,22 @@ func HandleDeleteElectricity(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Electricity record deleted"})
+}
+func HandleSetDimmer(c *gin.Context) {
+	deviceID := c.Param("device_id")
+
+	var dimmerData struct {
+		Value int `json:"value"`
+	}
+	// Parse JSON input
+	if err := c.BindJSON(&dimmerData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	// Update the dimmer value in the database
+
+	espURL := fmt.Sprintf("http://%s/dimmer", deviceID)
+	http.Post(espURL, "application/json", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %d}`, dimmerData.Value))))
+
+	c.JSON(http.StatusOK, gin.H{"message": "Dimmer command sent", "value": dimmerData.Value})
 }

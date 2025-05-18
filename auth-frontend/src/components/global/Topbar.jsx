@@ -8,11 +8,14 @@ import NotificationsNoneOutlinedIcon from "@mui/icons-material/NotificationsNone
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import PersonOutlinedIcon from "@mui/icons-material/PersonOutlined";
+import LogoutIcon from '@mui/icons-material/Logout';
+import {useAuth} from "../../AuthContext"; // Adjust the import path as necessary
 
 const Topbar = () => {
     const theme = useTheme();
     const colors = tokens(theme.palette.mode);
     const colorMode = useContext(ColorModeContext);
+    const { logout } = useAuth(); // Assuming you have AuthContext imported
      
 
     return (
@@ -44,6 +47,9 @@ const Topbar = () => {
             </IconButton>
             <IconButton>
                 <PersonOutlinedIcon />
+            </IconButton>
+            <IconButton>
+                <LogoutIcon onClick={logout}/>
             </IconButton>
         </Box>
     </Box>

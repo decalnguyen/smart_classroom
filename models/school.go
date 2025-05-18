@@ -21,6 +21,8 @@ type Student struct {
 	Age         int    `json:"age"`
 	Phone       string `json:"phone"`
 	Email       string `json:"email"`
+	AccountID   string `json:"account_id"`
+	Account     User   `gorm:"foreignKey:AccountID" json:"account"`
 	// Username   string `json:"username"`
 	// FaceID      string `json:"face_id"`
 	// Photo       string `json:"photo"`

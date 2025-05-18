@@ -4,6 +4,7 @@ import 'react-pro-sidebar/dist/css/styles.css';
 import {Box, IconButton, Typography, useTheme} from '@mui/material';
 import {Link} from 'react-router-dom';
 import {tokens} from '../../theme';
+import CalendarComponent from '../Calendar';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import PeopleOutlinedIcon from '@mui/icons-material/PeopleOutlined';
 import ContactsOutlinedIcon from '@mui/icons-material/ContactsOutlined';
@@ -161,8 +162,8 @@ const Sidebar = () => {
                             setSelected={setSelected}
                         />
                         <Item
-                            title="FAQ Page"
-                            to="/faq-page"
+                            title="Calendar Component"
+                            to="/calendarComp"
                             icon={<HelpOutlinedIcon />}
                             selected={selected}
                             setSelected={setSelected}

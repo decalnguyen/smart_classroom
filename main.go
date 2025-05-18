@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"smart_classroom/db"
 	"smart_classroom/handlers"
-	"smart_classroom/middleware"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -20,7 +19,7 @@ func main() {
 		AllowHeaders:     []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
-	r.Use(middleware.ClassroomNetworkMiddleware())
+	//r.Use(middleware.ClassroomNetworkMiddleware())
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)
 	r.POST("/logout", handlers.Logout)
