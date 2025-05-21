@@ -9,49 +9,51 @@ const LineChart = () => {
   const [data, setData] = useState([]);
 
   useEffect(() => {
-    const fetchSensorData = async () => {
-      try {
-        const endpoints = [
-          { key: "Humidity Sensor", url: "http://localhost:8081/sensor/sensor1" },
-          { key: "Temperature Sensor", url: "http://localhost:8081/sensor/sensor2" },
-          { key: "Light Sensor", url: "http://localhost:8081/sensor/sensor3" },
-        ];
+  const fetchSensorData = async () => {
+    try {
+      const endpoints = [
+        { key: "Humidity Sensor", url: "http://localhost:8081/sensor/sensor1" },
+        { key: "Temperature Sensor", url: "http://localhost:8081/sensor/sensor2" },
+        { key: "Light Sensor", url: "http://localhost:8081/sensor/sensor3" },
+      ];
 
-        const responses = await Promise.all(
-          endpoints.map((endpoint) =>
-            fetch(endpoint.url, {
-              method: "GET",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              credentials: "include",
-            }).then((res) => {
-              if (!res.ok) {
-                throw new Error(`Failed to fetch ${endpoint.key} data`);
-              }
-              return res.json();
-            })
-          )
-        );
+      const responses = await Promise.all(
+        endpoints.map((endpoint) =>
+          fetch(endpoint.url, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+          }).then((res) => {
+            if (!res.ok) {
+              throw new Error(`Failed to fetch ${endpoint.key} data`);
+            }
+            return res.json();
+          })
+        )
+      );
 
-        // Transform API responses into the required format for ResponsiveLine
-        const transformedData = responses.map((response, index) => ({
-          id: endpoints[index].key,
-          data: response.map((item) => ({
-            x: item.timestamp || `Point ${item.id}`, // Use a timestamp or fallback to a generic label
-            y: item.value || 0, // Use the value or fallback to 0
-          })),
-        }));
+      const transformedData = responses.map((response, index) => ({
+        id: endpoints[index].key,
+        data: response.map((item) => ({
+          x: item.timestamp || `Point ${item.id}`,
+          y: item.value || 0,
+        })),
+      }));
 
-        setData(transformedData);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-        setData([]); // Fallback to an empty array on error
-      }
-    };
+      setData(transformedData);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      setData([]);
+    }
+  };
 
-    fetchSensorData();
-  }, []);
+  fetchSensorData();
+  const interval = setInterval(fetchSensorData, 5000);
+
+  return () => clearInterval(interval); // Đặt ở đây, ngoài fetchSensorData
+}, []);
 
   return (
     <ResponsiveLine
