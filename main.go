@@ -74,6 +74,13 @@ func main() {
 	r.POST("/electricity", handlers.HandlePostElectricity)
 	r.PUT("/electricity/:id", handlers.HandlePutElectricity)
 	r.DELETE("/electricity/:id", handlers.HandleDeleteElectricity)
+
+	//Notification routes
+	r.GET("/notifications", handlers.HandleGetNotifications)
+	r.POST("/notifications", handlers.HandleCreateNotification)
+	r.PUT("/notifications/:id", handlers.HandleUpdateNotification)
+	r.DELETE("/notifications/:id", handlers.HandleDeleteNotification)
+
 	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)

@@ -30,6 +30,7 @@ func InitDB() {
 	modelsToMigrate := []interface{}{
 		&models.SenSorData{},
 		//&models.User{},
+		&models.Notification{},
 		&models.Sensor{},
 		&models.Building{},
 		&models.Classroom{},
