@@ -7,7 +7,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(
     localStorage.getItem("token") || null
   );
-  const navigate = useNavigate(); // <-- Add this line
+  const navigate = useNavigate(); 
 
   useEffect(() => {
     if (token) {
@@ -24,7 +24,7 @@ export const AuthProvider = ({ children }) => {
   const handleLogin = async (user_name, password) => {
   const data = await Login(user_name, password);
   console.log("Login API response:", data); // Debug: see what you get
-  if (data?.token) { // <-- Fix here
+  if (data?.token) { 
     setToken(data.token);
     localStorage.setItem("token", data.token);
     navigate("/dashboard");

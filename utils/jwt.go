@@ -8,22 +8,27 @@ import (
 )
 
 var jwtKey = []byte("your_secret_key") // Replace with a secure key
+type CustomClaims struct {
+	AccountID string `json:"account_id"`
+	Role      string `json:"role"`
+	jwt.RegisteredClaims
+}
 
 // GenerateJWT generates a JWT token for a user
 func GenerateJWT(id, role string) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": id,
-		"role":    role,
-		"exp":     time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
-	})
-
+	claims := CustomClaims{
+		AccountID: id,
+		Role:      role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtKey)
 }
 
 func ValidateJWT(tokenString string) (string, error) {
-	// Parse the token
-	token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Ensure the signing method is HMAC
+	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("invalid signing method")
 		}
@@ -34,13 +39,11 @@ func ValidateJWT(tokenString string) (string, error) {
 		return "", err
 	}
 
-	// Extract claims
-	if claims, ok := token.Claims.(*jwt.RegisteredClaims); ok && token.Valid {
-		// Check if the token is expired
+	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
 		if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
 			return "", errors.New("token expired")
 		}
-		return claims.Subject, nil // Return the username (subject)
+		return claims.AccountID, nil // Return the account_id
 	}
 
 	return "", errors.New("invalid token")

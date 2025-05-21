@@ -21,13 +21,9 @@ type Student struct {
 	Age         int    `json:"age"`
 	Phone       string `json:"phone"`
 	Email       string `json:"email"`
-	AccountID   string `json:"account_id"`
-	Account     User   `gorm:"foreignKey:AccountID" json:"account"`
-	// Username   string `json:"username"`
-	// FaceID      string `json:"face_id"`
-	// Photo       string `json:"photo"`
+	AccountID   string `json:"account_id"` // Foreign key
+	User        *User  `gorm:"foreignKey:AccountID;references:AccountID"`
 }
-
 type Subject struct {
 	SubjectID   uint   `gorm:"primaryKey" json:"subject_id"`
 	SubjectName string `json:"subject_name"`
@@ -57,11 +53,14 @@ type Attendance struct {
 }
 
 type Schedule struct {
-	UserID    string    `gorm:"primaryKey" json:"user_id"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	AccountID string    `json:"account_id"`
 	Role      string    `json:"role"`  // e.g., "student" or "teacher"
 	Title     string    `json:"title"` // e.g., "Math Class"
-	Date      time.Time `json:"date"`  // e.g., "2025-04-10"
-	Time      string    `json:"time"`  // e.g., "10:00 AM"
+	Desc      string    `json:"desc"`
+	Room      string    `json:"room"`
+	Day       string    `json:"day"`  // e.g., "Monday"
+	Time      string    `json:"time"` // e.g., "10:00 AM"
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

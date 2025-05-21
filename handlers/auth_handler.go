@@ -9,6 +9,7 @@ import (
 	"smart_classroom/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,11 +31,12 @@ func SignUp(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return
 	}
-
+	accountID := uuid.New().String()
 	// Create a new user
 	user := models.User{
-		Username: userInput.Username,
-		Password: password,
+		AccountID: accountID,
+		Username:  userInput.Username,
+		Password:  password,
 	}
 
 	if err := db.DB.Create(&user).Error; err != nil {
@@ -72,6 +74,8 @@ func Login(c *gin.Context) {
 	} else {
 		// Generate JWT token
 		token, err := utils.GenerateJWT(dbUser.AccountID, dbUser.Role)
+		//accountID, err := utils.ValidateJWT(token)
+		println("AccountID from token (GET):", dbUser.AccountID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 			return

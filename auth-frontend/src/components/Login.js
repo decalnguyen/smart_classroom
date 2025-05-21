@@ -10,7 +10,7 @@ const Login = () => {
     e.preventDefault();
     await login(username, password);
   };
-
+  console.log(localStorage.getItem("token"));
   return (
     <form onSubmit={submit}>
       <h1 className="h3 mb-3 fw-normal">Please sign in</h1>

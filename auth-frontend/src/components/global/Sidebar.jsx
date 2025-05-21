@@ -164,7 +164,7 @@ const Sidebar = () => {
                         <Item
                             title="Calendar Component"
                             to="/calendarComp"
-                            icon={<HelpOutlinedIcon />}
+                            icon={<CalendarTodayOutlinedIcon />}
                             selected={selected}
                             setSelected={setSelected}
                         />

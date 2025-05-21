@@ -219,25 +219,48 @@ func HandleDeleteTeacher(c *gin.Context) {
 func HandleGetSchedules(c *gin.Context) {
 	// Extract user ID from JWT
 	token := c.GetHeader("Authorization")
-	userID, err := utils.ValidateJWT(token)
+	accountID, err := utils.ValidateJWT(token)
+	println("AccountID from token (GET):", accountID)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 		return
 	}
 
 	var schedules []models.Schedule
-	if err := db.DB.Where("user_id = ?", userID).Find(&schedules).Error; err != nil {
+	if err := db.DB.Where("account_id = ?", accountID).Find(&schedules).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve schedules"})
 		return
 	}
 
-	c.JSON(http.StatusOK, schedules)
+	weekly := map[string][]gin.H{
+		"Monday":    {},
+		"Tuesday":   {},
+		"Wednesday": {},
+		"Thursday":  {},
+		"Friday":    {},
+		"Saturday":  {},
+		"Sunday":    {},
+	}
+	for _, s := range schedules {
+		day := s.Day // "Monday", "Tuesday", ...
+		session := gin.H{
+			"time":  s.Time,
+			"title": s.Title,
+			"desc":  s.Desc,
+			"room":  s.Room,
+		}
+		if _, ok := weekly[day]; ok {
+			weekly[day] = append(weekly[day], session)
+		}
+	}
+
+	c.JSON(http.StatusOK, weekly)
 }
 
 func HandlePostSchedule(c *gin.Context) {
 	// Extract user ID from JWT
 	token := c.GetHeader("Authorization")
-	userID, err := utils.ValidateJWT(token)
+	accountID, err := utils.ValidateJWT(token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 		return
@@ -250,7 +273,7 @@ func HandlePostSchedule(c *gin.Context) {
 	}
 
 	// Set the user ID for the schedule
-	schedule.UserID = userID
+	schedule.AccountID = accountID
 
 	if err := db.DB.Create(&schedule).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create schedule"})

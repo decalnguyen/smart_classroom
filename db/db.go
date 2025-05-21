@@ -24,9 +24,12 @@ func InitDB() {
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatal("Failed to ping the database:", err)
 	}
+	if err := DB.AutoMigrate(&models.User{}); err != nil {
+		log.Fatal("Failed to migrate User:", err)
+	}
 	modelsToMigrate := []interface{}{
 		&models.SenSorData{},
-		&models.User{},
+		//&models.User{},
 		&models.Sensor{},
 		&models.Building{},
 		&models.Classroom{},

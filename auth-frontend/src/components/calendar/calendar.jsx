@@ -19,20 +19,39 @@ const Calendar = () => {
     const colors = tokens(theme.palette.mode);
     const [currentEvents, setCurrentEvents] = useState([]);
 
-    const handleDateClick = (selected) => {
-        const title = prompt("Please enter a new title for your event");
-        const calendarApi = selected.view.calendar;
-        calendarApi.unselect(); // clear date selection
-        if (title) {
-            calendarApi.addEvent({
-                id: `${selected.dateStr}`,
+    const handleDateClick = async (selected) => {
+    const title = prompt("Please enter a new title for your event");
+    const calendarApi = selected.view.calendar;
+    calendarApi.unselect(); // clear date selection
+    if (title) {
+        // Save to backend
+        const token = localStorage.getItem("token");
+        await fetch("http://localhost:8081/schedules", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: token ? token : "",
+            },
+            body: JSON.stringify({
                 title,
-                start: selected.startStr,
-                end: selected.endStr,
-                allDay: selected.allDay,
-            });
-        }
+                day: new Date(selected.startStr).toLocaleDateString('en-US', { weekday: 'long' }), // e.g. "Monday"
+                time: "", // You can parse or let user input time if needed
+                desc: "",
+                room: "",
+                role: "student"
+            }),
+        });
+
+        // Add to calendar UI
+        calendarApi.addEvent({
+            id: `${selected.dateStr}`,
+            title,
+            start: selected.startStr,
+            end: selected.endStr,
+            allDay: selected.allDay,
+        });
     }
+};
     const handleEventClick = (selected) => {
         if (window.confirm(`Are you sure you want to delete the event '${selected.event.title}'`)) {
             selected.event.remove();
