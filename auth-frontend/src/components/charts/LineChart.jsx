@@ -2,7 +2,14 @@ import React, { useState, useEffect } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import { tokens } from "../../theme";
 import { useTheme } from "@mui/material";
-
+const sensorColors = [
+  "#ff6384", // Red
+  "#36a2eb", // Blue
+  "#4bc0c0", // Teal
+  "#ffcd56", // Yellow
+  "#9966ff", // Purple
+  "#2ecc40", // Green
+];
 const LineChart = () => {
   const theme = useTheme();
   const colors = tokens(theme.palette.mode);
@@ -37,11 +44,14 @@ const LineChart = () => {
       const transformedData = responses.map((response, index) => ({
         id: endpoints[index].key,
         data: response.map((item) => ({
-          x: item.timestamp || `Point ${item.id}`,
+          x: item.timestamp
+            ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : `Point ${item.id}`,
           y: item.value || 0,
         })),
       }));
 
+      console.log("Notifications data:", transformedData);
       setData(transformedData);
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -60,34 +70,29 @@ const LineChart = () => {
       data={data}
       theme={{
         axis: {
-          domain: {
-            line: {
-              stroke: colors.grey[100],
-            },
-          },
+          domain: { line: { stroke: colors.grey[100] } },
           ticks: {
-            line: {
-              stroke: colors.grey[100],
-              strokeWidth: 1,
-            },
-            text: {
-              fill: colors.grey[100],
-            },
+            line: { stroke: colors.grey[100], strokeWidth: 1 },
+            text: { fill: colors.grey[100] },
           },
         },
-        legends: {
-          text: {
-            fill: colors.grey[100],
+        legends: { text: { fill: colors.grey[100] } },
+        tooltip: {
+          container: {
+            background: "#222",
+            color: "#fff",
+            fontSize: 14,
           },
         },
       }}
-      margin={{ top: 50, right: 110, bottom: 50, left: 60 }}
+      colors={sensorColors}
+      margin={{ top: 50, right: 120, bottom: 50, left: 60 }}
       xScale={{ type: "point" }}
       yScale={{
         type: "linear",
         min: "auto",
         max: "auto",
-        stacked: true,
+        stacked: false,
         reverse: false,
       }}
       axisTop={null}
@@ -95,7 +100,7 @@ const LineChart = () => {
       axisBottom={{
         tickSize: 5,
         tickPadding: 5,
-        tickRotation: 0,
+        tickRotation: 30,
         legend: "Time",
         legendOffset: 36,
         legendPosition: "middle",
@@ -104,7 +109,7 @@ const LineChart = () => {
         tickSize: 5,
         tickPadding: 5,
         tickRotation: 0,
-        legend: "Value",
+        legend: "Sensor Value",
         legendOffset: -40,
         legendPosition: "middle",
       }}
@@ -114,6 +119,8 @@ const LineChart = () => {
       pointBorderColor={{ from: "serieColor" }}
       pointLabelYOffset={-12}
       useMesh={true}
+      enableArea={true}
+      areaOpacity={0.1}
       legends={[
         {
           anchor: "bottom-right",
@@ -140,6 +147,15 @@ const LineChart = () => {
           ],
         },
       ]}
+      tooltip={({ point }) => (
+        <div>
+          <strong>{point.serieId}</strong>
+          <br />
+          Time: {point.data.xFormatted}
+          <br />
+          Value: {point.data.yFormatted}
+        </div>
+      )}
     />
   );
 };

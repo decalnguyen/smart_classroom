@@ -26,7 +26,7 @@ const Topbar = () => {
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(false);
 
-    const token = localStorage.getItem("auth_token");
+    const token = localStorage.getItem("token");
     let accountId = "";
     if (token) {
         try {
@@ -42,6 +42,7 @@ const Topbar = () => {
         setLoading(true);
         try {
             const res = await fetch(`http://localhost:8081/notifications?account_id=${accountId}`, {
+                method: "GET",
                 credentials: "include",
             });
             if (!res.ok) throw new Error("Failed to fetch notifications");
