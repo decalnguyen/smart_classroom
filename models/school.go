@@ -44,6 +44,7 @@ type ClassroomTeacher struct {
 type Attendance struct {
 	ID               string `gorm:"primaryKey" json:"id"`
 	StudentID        string `json:"student_id"`
+	StudentName      string `json:"student_name"`
 	ClassroomID      uint   `json:"classroom_id"`
 	SubjectID        uint   `json:"subject_id"`
 	Date             string `json:"date"`
