@@ -4,19 +4,21 @@ networks:
     driver: bridge
 
 services: 
-  auth-frontend:
-    restart: always
-    container_name: auth-frontend
-    build: ./auth-frontend
-    ports:
-      - 3000:80
-    networks:
-      - smart_classroom
+  # auth-frontend:
+  #   restart: always
+  #   container_name: auth-frontend
+  #   build: ./auth-frontend
+  #   ports:
+  #     - 3000:80
+  #   networks:
+  #     - smart_classroom
 
   backend:
     restart: always
     container_name: backend
-    build: .
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     ports:
       - 8081:8081
     networks:
@@ -35,6 +37,38 @@ services:
       - ./Database/postgres.conf:/database/config/postgres.conf
     networks:
       - smart_classroom
+  notification:
+    restart: always
+    container_name: notificationwk
+    build:
+      context: .
+      dockerfile: notificationwk/Dockerfile
+    depends_on:
+      - rabbitmq
+    networks:
+      - smart_classroom
+  # ws_server:
+  #   restart: always
+  #   container_name: ws_server
+  #   build:
+    #   context: .
+    #   dockerfile: ws_server/Dockerfile
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - rabbitmq
+  #     - postgres
+  rabbitmq:
+    restart: always
+    container_name: rabbitmq
+    image: rabbitmq:3-management
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      - smart_classroom
+    volumes:
+    - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
 
 volumes:
   progresDB_data:

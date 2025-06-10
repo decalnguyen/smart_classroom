@@ -249,21 +249,30 @@ func HandleDeleteElectricity(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Electricity record deleted"})
 }
-func HandleSetDimmer(c *gin.Context) {
+func HandlePostDeviceMode(c *gin.Context) {
 	deviceID := c.Param("device_id")
+	deviceType := c.Param("device_type")
 
-	var dimmerData struct {
-		Value int `json:"value"`
+	var req struct {
+		Mode string `json:"mode"`
 	}
+
+	espURL := fmt.Sprintf("http://%s/%s", deviceType, deviceID)
+	payload := fmt.Sprintf(`{"mode": %d}`, req.Mode)
+
 	// Parse JSON input
-	if err := c.BindJSON(&dimmerData); err != nil {
+	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 	// Update the dimmer value in the database
 
-	espURL := fmt.Sprintf("http://%s/dimmer", deviceID)
-	http.Post(espURL, "application/json", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %d}`, dimmerData.Value))))
+	resp, err := http.Post(espURL, "application/json", bytes.NewBuffer([]byte(payload)))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to ESP32"})
+		return
+	}
+	defer resp.Body.Close()
 
-	c.JSON(http.StatusOK, gin.H{"message": "Dimmer command sent", "value": dimmerData.Value})
+	c.JSON(http.StatusOK, gin.H{"message": "Command sent", "device": deviceType, "mode": req.Mode})
 }

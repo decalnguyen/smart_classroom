@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"smart_classroom/db"
 	"smart_classroom/handlers"
 
@@ -45,6 +44,11 @@ func main() {
 	r.PUT("/classrooms/:id", handlers.HandlePutClassroom)
 	r.DELETE("/classrooms/:id", handlers.HandleDeleteClassroom)
 
+	// Class APIs
+	r.GET("/classes/:id", handlers.HandleGetClass)
+	r.POST("/classes", handlers.HandlePostClass)
+	r.PUT("/classes/:id", handlers.HandlePutClass)
+	r.DELETE("/classes/:id", handlers.HandleDeleteClass)
 	// Student APIs
 	r.GET("/students", handlers.HandleGetStudents)
 	r.POST("/students", handlers.HandlePostStudent)
@@ -81,9 +85,11 @@ func main() {
 	r.PUT("/notifications/:id", handlers.HandleUpdateNotification)
 	r.DELETE("/notifications/:id", handlers.HandleDeleteNotification)
 
+	r.POST("/device/:device_type/:device_id/mode", handlers.HandlePostDeviceMode)
+
 	handlers.SensorChecker()
 	port := ":8081"
 	r.Run(port)
 	log.Printf("Starting server on port %s", port)
-	log.Fatal(http.ListenAndServe(":8081", nil))
+
 }

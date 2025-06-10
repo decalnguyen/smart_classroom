@@ -9,12 +9,25 @@ type Building struct {
 }
 
 type Classroom struct {
-	ClassroomID   uint   `gorm:"primaryKey" json:"classroom_id"`
-	ClassroomName string `json:"classroom_name"`
-	BuildingID    uint   `json:"building_id"`
-	Capacity      int    `json:"capacity"`
+	ClassroomID   uint      `gorm:"primaryKey" json:"classroom_id"`
+	ClassroomName string    `json:"classroom_name"`
+	Subject       string    `json:"subject"`
+	BuildingID    uint      `json:"building_id"`
+	StartTime     time.Time `gorm:"not null"`
+	EndTime       time.Time `gorm:"not null"`
+	Classes       []Class   `gorm:"foreignKey:ClassroomID"`
 }
-
+type Class struct {
+	ClassID     uint   `gorm:"primaryKey"`
+	Subject     string `json:"subject"`
+	ClassroomID uint   `json:"classroom_id"`
+	DayOfWeek   string `json:"day_of_week"` // e.g., "Monday"
+	StartTime   time.Time
+	EndTime     time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Classroom   Classroom
+}
 type Student struct {
 	StudentID   uint   `gorm:"primaryKey" json:"student_id"`
 	StudentName string `json:"student_name"`
@@ -42,15 +55,19 @@ type ClassroomTeacher struct {
 }
 
 type Attendance struct {
-	ID               string `gorm:"primaryKey" json:"id"`
-	StudentID        string `json:"student_id"`
-	StudentName      string `json:"student_name"`
-	ClassroomID      uint   `json:"classroom_id"`
-	SubjectID        uint   `json:"subject_id"`
-	Date             string `json:"date"`
-	AttendanceStatus string `json:"attendance_status"`
-	DetectionTime    string `json:"detection_time"`
-	DeviceID         string `json:"device_id"`
+	ID        *string `gorm:"primaryKey" json:"id"`
+	StudentID uint    `json:"student_id" gorm:"foreignKey:StudentID"`
+	Student   *Student
+
+	ClassroomID uint  `json:"classroom_id"`
+	ClassID     *uint `json:"class_id" gorm:"foreignKey:ClassID"`
+	Class       *Class
+
+	Subject          *string `json:"subject"`
+	Date             string  `json:"date"`
+	AttendanceStatus string  `json:"attendance_status"`
+	DetectionTime    string  `json:"detection_time"`
+	DeviceID         string  `json:"device_id"`
 }
 
 type Schedule struct {

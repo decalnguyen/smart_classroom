@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
-
 	"smart_classroom/db"
 	"smart_classroom/models"
 	"smart_classroom/utils"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 )
@@ -113,7 +116,58 @@ func HandleDeleteClassroom(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Classroom deleted"})
 }
-
+func HandleGetClass(c *gin.Context) {
+	var class []models.Class
+	now := time.Now()
+	weekday := now.Weekday().String()
+	classroomID := c.Param("classroom_id")
+	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
+		classroomID, weekday, now, now).First(&class).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve classes"})
+		return
+	}
+	c.JSON(http.StatusOK, class)
+}
+func HandlePostClass(c *gin.Context) {
+	var class models.Class
+	if err := c.BindJSON(&class); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	if err := db.DB.Where("class_id = ?", class.ClassID).First(&models.Class{}).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Class already exists"})
+		return
+	} else if err := db.DB.Create(&class).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create class"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Class created"})
+}
+func HandlePutClass(c *gin.Context) {
+	id := c.Param("id")
+	var class models.Class
+	if err := db.DB.Where("class_id = ?", id).First(&class).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
+		return
+	}
+	if err := c.BindJSON(&class); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	if err := db.DB.Save(&class).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update class"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Class updated"})
+}
+func HandleDeleteClass(c *gin.Context) {
+	id := c.Param("id")
+	if err := db.DB.Where("class_id = ?", id).Delete(&models.Class{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete class"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Class deleted"})
+}
 func HandleGetStudents(c *gin.Context) {
 	var students []models.Student
 	if err := db.DB.Find(&students).Error; err != nil {
@@ -344,18 +398,47 @@ func HandleGetAttendance(c *gin.Context) {
 }
 func HandlePostAttendance(c *gin.Context) {
 	var attendance models.Attendance
-	if err := c.BindJSON(&attendance); err != nil {
+
+	if err := c.ShouldBindJSON(&attendance); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		log.Printf("Parsed input: %+v\n", attendance)
 		return
 	}
 
-	if err := db.DB.Where("student_id = ? AND class_id = ?", attendance.StudentID, attendance.ClassroomID).First(&models.Attendance{}).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Attendance record already exists"})
+	now := time.Now()
+	weekday := now.Weekday().String()
+
+	var class models.Class
+	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
+		attendance.ClassroomID, weekday, now, now).First(&class).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
 		return
-	} else if err := db.DB.Create(&attendance).Error; err != nil {
+	}
+	var student models.Student
+	if err := db.DB.Where("student_id = ?", attendance.StudentID).First(&student).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Student not found"})
+		return
+	}
+	id_new := uuid.New().String()
+	attendance = models.Attendance{
+		ID:        &id_new,
+		StudentID: attendance.StudentID,
+		Student:   &student,
+
+		ClassroomID:      attendance.ClassroomID,
+		ClassID:          &class.ClassID,
+		Class:            &class,
+		Subject:          &class.Subject,
+		Date:             now.Format("2006-01-02"),
+		AttendanceStatus: attendance.AttendanceStatus,
+		DetectionTime:    now.Format("15:04:05"),
+		DeviceID:         attendance.DeviceID,
+	}
+	if err := db.DB.Create(&attendance).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create attendance record"})
 		return
 	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
 }
 func HandlePutAttendance(c *gin.Context) {

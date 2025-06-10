@@ -10,7 +10,8 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o build .
+RUN go build -o build ./notificationwk
+# This Dockerfile builds a Go application and prepares it for deployment.
 
 FROM ubuntu
 
