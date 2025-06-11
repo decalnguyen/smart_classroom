@@ -451,13 +451,14 @@ func HandlePostAttendance(c *gin.Context) {
 		return
 	}
 
-	loc := time.FixedZone("UTC+7", 7*60*60) // or "Asia/Bangkok", etc.
-	now := time.Now().In(loc)
-	weekday := now.Weekday().String()
+	loc := time.FixedZone("UTC+7", 7*60*60) // Vietnam Time
+	nowVN := time.Now().In(loc)             // Vietnam time
+	nowUTC := nowVN.UTC()
+	weekday := nowVN.Weekday().String()
 
 	var class models.Class
 	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-		attendance.ClassroomID, weekday, now, now).First(&class).Error; err != nil {
+		attendance.ClassroomID, weekday, nowUTC, nowUTC).First(&class).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
 		return
 	}
@@ -476,9 +477,9 @@ func HandlePostAttendance(c *gin.Context) {
 		ClassID:          &class.ClassID,
 		Class:            &class,
 		Subject:          &class.Subject,
-		Date:             now.Format("2006-01-02"),
+		Date:             nowUTC.Format("2006-01-02"),
 		AttendanceStatus: attendance.AttendanceStatus,
-		DetectionTime:    now.Format("15:04:05"),
+		DetectionTime:    nowUTC.Format("15:04:05"),
 		DeviceID:         attendance.DeviceID,
 	}
 	if err := db.DB.Create(&attendance).Error; err != nil {
