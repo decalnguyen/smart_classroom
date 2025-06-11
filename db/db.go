@@ -41,6 +41,8 @@ func InitDB() {
 		&models.ClassroomTeacher{},
 		&models.Schedule{},
 		&models.Electricity{},
+		&models.Class{},
+		&models.ClassStudent{},
 	}
 	log.Println("Database connection initialized successfully")
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

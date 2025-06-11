@@ -12,7 +12,7 @@ const Attandance = () => {
     const columns = [
         { field: "student_id", headerName: "ID" },
         { field: "student_name", headerName: "Name", flex: 1, cellClassName: "name-column--cell" },
-        { field: "age", headerName: "Age", type: "number", headerAlign: "left", align: "left" },
+        { field: "status", headerName: "Status", type: "string", headerAlign: "left", align: "left" },
         { field: "phone", headerName: "Phone Number", flex: 1 },
         { field: "email", headerName: "Email", flex: 1 },
       ];
@@ -22,7 +22,7 @@ const Attandance = () => {
     useEffect(() => {
         const fetchStudentData = async () => {
             try {
-              const response = await fetch("http://localhost:8081/students", {
+              const response = await fetch("http://localhost:8081/attendance?classroom_id=101", {
                 method: "GET",
                 headers: {
                   "Content-Type": "application/json",

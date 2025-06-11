@@ -389,12 +389,58 @@ func HandleDeleteSchedule(c *gin.Context) {
 }
 
 func HandleGetAttendance(c *gin.Context) {
-	var attendance []models.Attendance
-	if err := db.DB.Find(&attendance).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve attendance records"})
+	classroomID := c.Query("classroom_id")
+	loc := time.FixedZone("UTC+7", 7*60*60) // or "Asia/Bangkok", etc.
+	now := time.Now().In(loc)
+	weekday := now.Weekday().String()
+	// Find the class that is currently ongoing in the specified classroom
+	var classID uint
+	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
+		classroomID, weekday, now, now).
+		Pluck("class_id", &classID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
 		return
 	}
-	c.JSON(http.StatusOK, attendance)
+	// Get the list of students enrolled in the class
+	var enrolledStudents []models.Student
+	if err := db.DB.
+		Joins("JOIN class_students ON students.student_id = class_students.student_id").
+		Where("class_students.class_id = ?", classID).
+		Find(&enrolledStudents).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get enrolled students"})
+		return
+	}
+	// Get the IDs of students who are present today
+	var presentStudentIDs []uint
+	if err := db.DB.Model(&models.Attendance{}).
+		Where("class_id = ? AND date = ? AND attendance_status = ?", classID, now.Format("2006-01-02"), "present").
+		Pluck("student_id", &presentStudentIDs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get attendance records"})
+		return
+	}
+	results := []gin.H{}
+	presentMap := map[uint]bool{}
+	for _, student := range presentStudentIDs {
+		// Check if the student is present today
+		presentMap[student] = true
+	}
+	for _, student := range enrolledStudents {
+		// Create a response structure for each student
+		status := "unknown"
+		if presentMap[student.StudentID] {
+			status = "present"
+		} else {
+			status = "absent"
+		}
+		results = append(results, gin.H{
+			"student_id":   student.StudentID,
+			"student_name": student.StudentName,
+			"status":       status,
+			"phone":        student.Phone,
+			"email":        student.Email,
+		})
+	}
+	c.JSON(http.StatusOK, results)
 }
 func HandlePostAttendance(c *gin.Context) {
 	var attendance models.Attendance
@@ -405,7 +451,8 @@ func HandlePostAttendance(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
+	loc := time.FixedZone("UTC+7", 7*60*60) // or "Asia/Bangkok", etc.
+	now := time.Now().In(loc)
 	weekday := now.Weekday().String()
 
 	var class models.Class

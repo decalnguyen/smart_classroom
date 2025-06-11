@@ -13,30 +13,40 @@ type Classroom struct {
 	ClassroomName string    `json:"classroom_name"`
 	Subject       string    `json:"subject"`
 	BuildingID    uint      `json:"building_id"`
-	StartTime     time.Time `gorm:"not null"`
-	EndTime       time.Time `gorm:"not null"`
+	StartTime     time.Time `json:"start_time"`
+	EndTime       time.Time `json:"end_time"`
 	Classes       []Class   `gorm:"foreignKey:ClassroomID"`
 }
 type Class struct {
-	ClassID     uint   `gorm:"primaryKey"`
-	Subject     string `json:"subject"`
-	ClassroomID uint   `json:"classroom_id"`
-	DayOfWeek   string `json:"day_of_week"` // e.g., "Monday"
-	StartTime   time.Time
-	EndTime     time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ClassID     uint      `gorm:"primaryKey" json:"class_id"`
+	Subject     string    `json:"subject"`
+	ClassroomID uint      `json:"classroom_id"`
+	DayOfWeek   string    `json:"day_of_week"`
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	Classroom   Classroom
+	Students    []Student `gorm:"many2many:class_students;" json:"students"`
+}
+type ClassStudent struct {
+	ID        uint `gorm:"primaryKey"`
+	ClassID   uint
+	StudentID uint
+	Student   Student
+	Class     Class
 }
 type Student struct {
-	StudentID   uint   `gorm:"primaryKey" json:"student_id"`
-	StudentName string `json:"student_name"`
-	Age         int    `json:"age"`
-	Phone       string `json:"phone"`
-	Email       string `json:"email"`
-	AccountID   string `json:"account_id"` // Foreign key
-	User        *User  `gorm:"foreignKey:AccountID;references:AccountID"`
+	StudentID   uint    `gorm:"primaryKey" json:"student_id"`
+	StudentName string  `json:"student_name"`
+	Age         int     `json:"age"`
+	Phone       string  `json:"phone"`
+	Email       string  `json:"email"`
+	AccountID   string  `json:"account_id"`
+	User        *User   `gorm:"foreignKey:AccountID;references:AccountID"`
+	Classes     []Class `gorm:"many2many:class_students;" json:"classes"`
 }
+
 type Subject struct {
 	SubjectID   uint   `gorm:"primaryKey" json:"subject_id"`
 	SubjectName string `json:"subject_name"`
