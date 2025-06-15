@@ -4,6 +4,7 @@ import (
 	"log"
 	"smart_classroom/db"
 	"smart_classroom/handlers"
+	rabbitmq "smart_classroom/notificationwk"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,8 @@ import (
 
 func main() {
 	db.InitDB()
+	rabbitmq.Init()
+	rabbitmq.ConsumeAndHandleNotifications()
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:3000"},
