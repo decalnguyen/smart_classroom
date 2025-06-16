@@ -500,7 +500,7 @@ func HandlePostAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create notification"})
 		return
 	}
-	rabbitmq.Publish("notification", notif)
+	rabbitmq.Publish("notify.data", notif)
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
 }
 func HandlePutAttendance(c *gin.Context) {

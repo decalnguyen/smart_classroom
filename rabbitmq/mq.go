@@ -21,7 +21,7 @@ func Init() {
 		log.Fatalf("Failed to open a channel: %s", err)
 	}
 	if err = channel.ExchangeDeclare(
-		"notification_exchange",
+		"main_exchange",
 		"direct",
 		true,
 		false,

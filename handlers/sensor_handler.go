@@ -81,10 +81,12 @@ func HandlePostSensorData(c *gin.Context) {
 
 func HandleGetSensorData(c *gin.Context) {
 	deviceID := c.Param("device_id")
+	startTime := c.Query("start")
+	endTime := c.Query("end")
 	var data []models.SenSorData
 
 	// Retrieve all sensor data from the database
-	if err := db.DB.Where("device_id = ?", deviceID).Find(&data).Error; err != nil {
+	if err := db.DB.Where("device_id = ? AND timestamp BETWEEN ? AND ?", deviceID, startTime, endTime).Order("timestamp asc").Find(&data).Error; err != nil {
 		log.Printf("Error retrieving data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
 		return
