@@ -22,7 +22,7 @@ type UserProfile struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"` // Soft delete
 }
 type Notification struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
+	ID        string    `gorm:"primaryKey" json:"id"`
 	AccountID string    `json:"account_id"` // Foreign key to User.AccountID
 	Title     string    `json:"title"`
 	Message   string    `json:"message"`

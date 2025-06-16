@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"smart_classroom/db"
 	"smart_classroom/models"
+	"smart_classroom/rabbitmq"
 
 	"github.com/gin-gonic/gin"
 )
@@ -71,6 +72,8 @@ func HandlePostSensorData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
 		return
 	}
+	// Publish the sensor data to RabbitMQ
+	rabbitmq.Publish("sensor.data", data)
 
 	log.Printf("Received sensor data: %+v", data)
 	c.JSON(http.StatusOK, gin.H{"message": "Data received"})

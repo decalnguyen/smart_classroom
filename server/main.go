@@ -4,7 +4,8 @@ import (
 	"log"
 	"smart_classroom/db"
 	"smart_classroom/handlers"
-	rabbitmq "smart_classroom/notificationwk"
+	"smart_classroom/rabbitmq"
+	"smart_classroom/ws"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,7 @@ import (
 func main() {
 	db.InitDB()
 	rabbitmq.Init()
-	rabbitmq.ConsumeAndHandleNotifications()
+	rabbitmq.ConsumeAndHandleMessage()
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:3000"},
@@ -21,6 +22,8 @@ func main() {
 		AllowHeaders:     []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
+	r.GET("/ws/notifications", ws.NotificationsWsHandler)
+	r.GET("/ws/sensor", ws.SensorWsHandler)
 	//r.Use(middleware.ClassroomNetworkMiddleware())
 	r.POST("/signup", handlers.SignUp)
 	r.POST("/login", handlers.Login)

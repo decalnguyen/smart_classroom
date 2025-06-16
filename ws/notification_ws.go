@@ -1,4 +1,4 @@
-package handlers
+package ws
 
 import (
 	"log"
@@ -15,7 +15,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func wsHandler(c *gin.Context) {
+// NotificationsWsHandler handles WebSocket connections for notifications
+func NotificationsWsHandler(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade connection: %v", err)
@@ -24,6 +25,7 @@ func wsHandler(c *gin.Context) {
 	clients[conn] = true
 	log.Println("New client connected")
 }
+
 func HandleNotificationsWS(message []byte) {
 	for client := range clients {
 		if err := client.WriteMessage(websocket.TextMessage, message); err != nil {

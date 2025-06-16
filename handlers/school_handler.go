@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"smart_classroom/db"
 	"smart_classroom/models"
+	"smart_classroom/rabbitmq"
 	"smart_classroom/utils"
 	"time"
 
@@ -486,7 +488,19 @@ func HandlePostAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create attendance record"})
 		return
 	}
-
+	notif := models.Notification{
+		ID:        uuid.New().String(),
+		Title:     "attendance",
+		Message:   fmt.Sprintf("Attendance recorded for student %s in class %s", student.StudentName, class.Subject),
+		AccountID: student.AccountID,
+		IsRead:    false,
+		CreatedAt: nowUTC,
+	}
+	if err := db.DB.Create(&notif).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create notification"})
+		return
+	}
+	rabbitmq.Publish("notification", notif)
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
 }
 func HandlePutAttendance(c *gin.Context) {
