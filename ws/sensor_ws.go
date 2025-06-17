@@ -20,8 +20,27 @@ func SensorWsHandler(c *gin.Context) {
 		log.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
+
 	sensorClients[conn] = true
 	log.Println("New sensor client connected")
+
+	// Keep the connection open and listen for close/error
+	go func() {
+		defer func() {
+			conn.Close()
+			delete(sensorClients, conn)
+			log.Println("Sensor client disconnected")
+		}()
+
+		for {
+			// Just read to keep the connection alive (you can also use ping/pong)
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				log.Printf("WebSocket read error: %v", err)
+				break
+			}
+		}
+	}()
 }
 
 func HandleSensorNotificationsWS(message []byte) {

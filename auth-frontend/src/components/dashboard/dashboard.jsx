@@ -169,9 +169,12 @@ const Dashboard = () => {
                     <Box 
                         gridColumn="span 8"
                         gridRow="span 2"
+                        height={"470px"}
+                        width={"100%"}
                         backgroundColor={colors.primary[400]}
                     >
                         <Box
+                            
                             mt="25px"
                             p="0 30px"
                             display="flex"
@@ -231,7 +234,7 @@ const Dashboard = () => {
                                 </IconButton>
                             </Box>
                         </Box>
-                        <Box height="250px" weight ="500px"ml="-20px">
+                        <Box height="300px" weight ="100%" ml="-20px">
                              <LineChart isDashboard={true}/> 
                         </Box>
                         <Box height="250px" weight ="500px"ml="-20px">

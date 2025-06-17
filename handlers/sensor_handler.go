@@ -58,7 +58,10 @@ func HandlePostSensorData(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	data.Timestamp = time.Now()
+	loc := time.FixedZone("UTC+7", 7*60*60) // Vietnam Time
+	nowVN := time.Now().In(loc)
+	data.Timestamp = nowVN
+
 	if err := db.DB.Create(&data).Error; err != nil {
 		if err := db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
 			Updates(map[string]interface{}{

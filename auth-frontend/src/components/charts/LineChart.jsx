@@ -1,16 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import { tokens } from "../../theme";
-import { useTheme } from "@mui/material";
-import { Button, TextField, Box } from "@mui/material";
+import { useTheme, Box, Button, TextField } from "@mui/material";
 
 const sensorColors = [
-  "#ff6384", // Red
-  "#36a2eb", // Blue
-  "#4bc0c0", // Teal
-  "#ffcd56", // Yellow
-  "#9966ff", // Purple
-  "#2ecc40", // Green
+  "#ff6384", "#36a2eb", "#4bc0c0", "#ffcd56", "#9966ff", "#2ecc40",
 ];
 
 const MAX_POINTS = 20;
@@ -22,52 +16,50 @@ const LineChart = () => {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
 
-  // WebSocket real-time updates
+  const knownSensors = ["Temperature Sensor", "Humidity Sensor", "Light Sensor"];
+
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:8081/ws/sensor");
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        const sensorName = msg.device_type; // 👈 use device_type instead of sensor_name
+
+        if (!knownSensors.includes(sensorName)) return;
+
+        const timestamp = new Date(msg.timestamp);
+        if (isNaN(timestamp.getTime())) return;
+
+        const point = {
+          x: timestamp.toISOString(),
+          y: typeof msg.value === "number" ? msg.value : 0,
+        };
+
         setData((prevData) => {
           const newData = [...prevData];
-          const sensorIndex = newData.findIndex((s) => s.id === msg.sensor_name);
+          const sensorIndex = newData.findIndex(s => s.id === sensorName);
+
+          if (!point.x || typeof point.y !== "number") return prevData;
 
           if (sensorIndex !== -1) {
-            const sensorData = [...newData[sensorIndex].data];
-            sensorData.push({
-              x: new Date(msg.timestamp).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              }),
-              y: msg.value,
-            });
+            const sensorData = [...newData[sensorIndex].data, point];
             if (sensorData.length > MAX_POINTS) sensorData.shift();
             newData[sensorIndex] = { ...newData[sensorIndex], data: sensorData };
           } else {
-            newData.push({
-              id: msg.sensor_name,
-              data: [
-                {
-                  x: new Date(msg.timestamp).toLocaleTimeString(),
-                  y: msg.value,
-                },
-              ],
-            });
+            newData.push({ id: sensorName, data: [point] });
           }
 
           return newData;
         });
       } catch (error) {
-        console.error("WebSocket message error:", error);
+        console.error("WebSocket error:", error);
       }
     };
 
     return () => ws.close();
   }, []);
 
-  // Historical data fetcher
   const fetchHistoricalData = async () => {
     try {
       const endpoints = [
@@ -77,27 +69,20 @@ const LineChart = () => {
       ];
 
       const responses = await Promise.all(
-        endpoints.map((endpoint) =>
+        endpoints.map(endpoint =>
           fetch(endpoint.url, {
             method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             credentials: "include",
-          }).then((res) => {
-            if (!res.ok) throw new Error(`Failed to fetch ${endpoint.key} data`);
-            return res.json();
-          })
+          }).then(res => res.ok ? res.json() : [])
         )
       );
 
       const transformedData = responses.map((response, index) => ({
         id: endpoints[index].key,
-        data: response.map((item) => ({
-          x: new Date(item.timestamp).toLocaleTimeString([], {
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-          }),
-          y: item.value || 0,
+        data: (response || []).map(item => ({
+          x: new Date(item.timestamp).toISOString(),
+          y: typeof item.value === "number" ? item.value : 0,
         })),
       }));
 
@@ -128,8 +113,15 @@ const LineChart = () => {
           Fetch Historical Data
         </Button>
       </Box>
+
       <ResponsiveLine
-        data={data}
+        data={data.length > 0 ? data : [{
+          id: "No Data",
+          data: Array.from({ length: MAX_POINTS }, (_, i) => ({
+            x: new Date(Date.now() - (MAX_POINTS - i) * 1000).toISOString(),
+            y: 0,
+          })),
+        }]}
         theme={{
           axis: {
             domain: { line: { stroke: colors.grey[100] } },
@@ -148,17 +140,25 @@ const LineChart = () => {
           },
         }}
         colors={sensorColors}
-        margin={{ top: 50, right: 120, bottom: 50, left: 60 }}
-        xScale={{ type: "point" }}
-        yScale={{ type: "linear", min: "auto", max: "auto", stacked: false, reverse: false }}
+        margin={{ top: 50, right: 120, bottom: 60, left: 60 }}
+        xScale={{
+          type: "time",
+          format: "%Y-%m-%dT%H:%M:%S.%LZ",
+          useUTC: false,
+          precision: "second",
+        }}
+        xFormat="time:%H:%M:%S"
+        yScale={{ type: "linear", min: "auto", max: "auto", stacked: false }}
         axisTop={null}
         axisRight={null}
         axisBottom={{
+          format: "%H:%M:%S",
+          tickValues: "every 1 minute",
           tickSize: 5,
           tickPadding: 5,
           tickRotation: 30,
           legend: "Time",
-          legendOffset: 36,
+          legendOffset: 40,
           legendPosition: "middle",
         }}
         axisLeft={{
@@ -173,7 +173,6 @@ const LineChart = () => {
         pointColor={{ theme: "background" }}
         pointBorderWidth={2}
         pointBorderColor={{ from: "serieColor" }}
-        pointLabelYOffset={-12}
         useMesh={true}
         enableArea={true}
         areaOpacity={0.1}
@@ -183,27 +182,21 @@ const LineChart = () => {
           translateX: 100,
           itemWidth: 80,
           itemHeight: 20,
-          itemOpacity: 0.75,
           symbolSize: 12,
           symbolShape: "circle",
-          symbolBorderColor: "rgba(0, 0, 0, .5)",
-          effects: [
-            {
-              on: "hover",
-              style: {
-                itemBackground: "rgba(0, 0, 0, .03)",
-                itemOpacity: 1,
-              },
+          effects: [{
+            on: "hover",
+            style: {
+              itemBackground: "rgba(0, 0, 0, .03)",
+              itemOpacity: 1,
             },
-          ],
+          }],
         }]}
         tooltip={({ point }) => (
           <div>
-            <strong>{point.serieId}</strong>
-            <br />
-            Time: {point.data.xFormatted}
-            <br />
-            Value: {point.data.yFormatted}
+            <strong>{point.serieId}</strong><br />
+            Time: {new Date(point.data.x).toLocaleTimeString()}<br />
+            Value: {point.data.y}
           </div>
         )}
       />

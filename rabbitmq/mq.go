@@ -33,7 +33,13 @@ func Init() {
 	}
 }
 func Publish(routingKey string, msg interface{}) {
-	body, _ := json.Marshal(msg)
+	body, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Failed to marshal message: %s", err)
+		return
+	}
+	// Publish the message to the exchange with the specified routing key
+	log.Printf("Publishing message with routing key: %s, body: %s", routingKey, body)
 	if err := channel.Publish(
 		"main_exchange", // exchange
 		routingKey,
@@ -68,6 +74,8 @@ func ConsumeAndHandleMessage() {
 		)
 		if err != nil {
 			log.Fatalf("Failed to consume messages from notification queue: %s", err)
+		} else {
+			log.Println("Started consuming messages from notification queue")
 		}
 		for msg := range msgs {
 			ws.HandleNotificationsWS(msg.Body)
@@ -86,6 +94,8 @@ func ConsumeAndHandleMessage() {
 		)
 		if err != nil {
 			log.Fatalf("Failed to consume messages from sensor queue: %s", err)
+		} else {
+			log.Println("Started consuming messages from sensor queue")
 		}
 		for msg := range msgs {
 			ws.HandleSensorNotificationsWS(msg.Body)
