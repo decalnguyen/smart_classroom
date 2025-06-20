@@ -20,8 +20,14 @@ const LineChart = () => {
 
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:8081/ws/sensor");
+     
+     ws.onopen = () => console.log("✅ WebSocket connected");
+    ws.onmessage = (e) => console.log("📨 Message:", e.data);
+    ws.onerror = (e) => console.error("❌ WebSocket error:", e);
+    ws.onclose = () => console.log("❌ WebSocket closed");
 
     ws.onmessage = (event) => {
+      console.log("📩 WebSocket message received:", event.data);
       try {
         const msg = JSON.parse(event.data);
         const sensorName = msg.device_type; // 👈 use device_type instead of sensor_name

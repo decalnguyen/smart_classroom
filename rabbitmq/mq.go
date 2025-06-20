@@ -98,6 +98,7 @@ func ConsumeAndHandleMessage() {
 			log.Println("Started consuming messages from sensor queue")
 		}
 		for msg := range msgs {
+			log.Printf("Received sensor message from MQ now Send to WS: %s", msg.Body)
 			ws.HandleSensorNotificationsWS(msg.Body)
 		}
 	}()

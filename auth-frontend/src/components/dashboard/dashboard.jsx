@@ -29,24 +29,24 @@ const Dashboard = () => {
 
     useEffect(() => {
         // Example API calls, replace URLs with your real endpoints
-        fetch("/api/students-today")
-            .then(res => res.json())
-            .then(data => setStudentsToday(data.count || 0));
+        // fetch("/api/students-today")
+        //     .then(res => res.json())
+        //     .then(data => setStudentsToday(data.count || 0));
 
-        fetch("/api/people-in-room")
-            .then(res => res.json())
-            .then(data => setPeopleInRoom(data.count || 0));
+        // fetch("/api/people-in-room")
+        //     .then(res => res.json())
+        //     .then(data => setPeopleInRoom(data.count || 0));
 
-        fetch("/api/event-wait")
-            .then(res => res.json())
-            .then(data => setEventWait(data.count || 0));
-        fetch("/api/fan/mode")
-            .then(res => res.json())
-            .then(data => setFanMode(data.mode || 0));
+        // fetch("/api/event-wait")
+        //     .then(res => res.json())
+        //     .then(data => setEventWait(data.count || 0));
+        // fetch("/api/fan/mode")
+        //     .then(res => res.json())
+        //     .then(data => setFanMode(data.mode || 0));
 
-        fetch("/api/led/mode")
-            .then(res => res.json())
-            .then(data => setLedMode(data.mode || 0));    
+        // fetch("/api/led/mode")
+        //     .then(res => res.json())
+        //     .then(data => setLedMode(data.mode || 0));    
         function fetchAttendance() {
             fetch("http://localhost:8081/attendance")
                 .then(res => res.json())
@@ -55,7 +55,7 @@ const Dashboard = () => {
 
         fetchAttendance(); // initial fetch
 
-        const interval = setInterval(fetchAttendance, 5000); // fetch every 5 seconds
+         const interval = setInterval(fetchAttendance, 5000); // fetch every 5 seconds
 
         return () => clearInterval(interval); // cleanup on unmount
     }, []);

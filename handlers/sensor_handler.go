@@ -76,9 +76,9 @@ func HandlePostSensorData(c *gin.Context) {
 		return
 	}
 	// Publish the sensor data to RabbitMQ
+	log.Printf("Received sensor data: %+v", data)
 	rabbitmq.Publish("sensor.data", data)
 
-	log.Printf("Received sensor data: %+v", data)
 	c.JSON(http.StatusOK, gin.H{"message": "Data received"})
 }
 
