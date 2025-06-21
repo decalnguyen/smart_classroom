@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"smart_classroom/utils"
+	"smart_classroom/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )

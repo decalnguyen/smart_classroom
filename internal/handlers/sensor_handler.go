@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"fmt"
-	"smart_classroom/db"
-	"smart_classroom/models"
-	"smart_classroom/rabbitmq"
+	"smart_classroom/internal/db"
+	"smart_classroom/internal/models"
+	"smart_classroom/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
 )

@@ -10,7 +10,7 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o build ./server
+RUN go build -o build ./server/ws
 
 FROM ubuntu
 

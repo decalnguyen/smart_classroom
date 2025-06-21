@@ -12,18 +12,29 @@ services:
       - 3000:80
     networks:
       - smart_classroom
-
   backend:
     restart: always
     container_name: backend
     build:
       context: .
-      dockerfile: server/Dockerfile
+      dockerfile: server/http-api/Dockerfile
     ports:
       - 8081:8081
     networks:
       - smart_classroom
-
+  websocket:
+    restart: always
+    container_name: websocket
+    build:
+      context: .
+      dockerfile: server/ws/Dockerfile
+    ports:
+      - 8080:8080
+    depends_on:
+      - rabbitmq
+      - postgres
+    networks:
+      - smart_classroom
   postgres:
     restart: always
     container_name: postgres
