@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"net/http"
-	"smart_classroom/db"
-	"smart_classroom/models"
+	"smart_classroom/internal/db"
+	"smart_classroom/internal/models"
 
 	"github.com/gin-gonic/gin"
 )

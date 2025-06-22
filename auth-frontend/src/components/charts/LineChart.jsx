@@ -19,7 +19,7 @@ const LineChart = () => {
   const knownSensors = ["Temperature Sensor", "Humidity Sensor", "Light Sensor"];
 
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8080/ws/sensor");
+    const ws = new WebSocket("ws://localhost:8082/ws/sensor");
      
      ws.onopen = () => console.log("✅ WebSocket connected");
     ws.onmessage = (e) => console.log("📨 Message:", e.data);

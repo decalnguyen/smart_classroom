@@ -3,26 +3,28 @@ package rabbitmq
 import (
 	"encoding/json"
 	"log"
-	"smart_classroom/ws"
 
 	"github.com/streadway/amqp"
 )
 
-var conn *amqp.Connection
-var channel *amqp.Channel
+var Conn *amqp.Connection
+var Channel *amqp.Channel
 
 func Init() {
 	var err error
-	if conn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/"); err != nil {
+	Conn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
+	if err != nil {
 		log.Fatalf("Failed to connect to RabbitMQ: %s", err)
 	}
-
-	if channel, err = conn.Channel(); err != nil {
+	//defer conn.Close()
+	Channel, err = Conn.Channel()
+	if err != nil {
 		log.Fatalf("Failed to open a channel: %s", err)
 	}
-	if err = channel.ExchangeDeclare(
+	//defer channel.Close()
+	if err = Channel.ExchangeDeclare(
 		"main_exchange",
-		"direct",
+		"fanout",
 		true,
 		false,
 		false,
@@ -40,9 +42,9 @@ func Publish(routingKey string, msg interface{}) {
 	}
 	// Publish the message to the exchange with the specified routing key
 	log.Printf("Publishing message with routing key: %s, body: %s", routingKey, body)
-	if err := channel.Publish(
+	if err := Channel.Publish(
 		"main_exchange", // exchange
-		routingKey,
+		"",
 		false,
 		false,
 		amqp.Publishing{
@@ -53,18 +55,39 @@ func Publish(routingKey string, msg interface{}) {
 		log.Printf("Failed to publish message: %s", err)
 	}
 }
-func ConsumeAndHandleMessage() {
-	//1. Declare a queue for notifications
-	notiQueue, _ := channel.QueueDeclare("notification_queue", false, true, true, false, nil)
-	channel.QueueBind(notiQueue.Name, "notify.*", "main_exchange", false, nil)
-	//2. Declare a queue for sensor notifications
-	sensorQueue, _ := channel.QueueDeclare("sensor_queue", false, true, true, false, nil)
-	channel.QueueBind(sensorQueue.Name, "sensor.*", "main_exchange", false, nil)
+func DecalareQueue(queueName string) (amqp.Queue, error) {
+	// Declare a queue with the specified name
+	queue, err := Channel.QueueDeclare(
+		queueName, // name
+		false,     // durable
+		false,     // delete when unused
+		false,     // exclusive
+		false,     // no-wait
+		nil,       // arguments
+	)
 
+	if err != nil {
+		log.Printf("Failed to declare queue %s: %s", queueName, err)
+		return amqp.Queue{}, err
+	}
+	if err = Channel.QueueBind(
+		queue.Name,      // queue name
+		"",              // routing key
+		"main_exchange", // exchange
+		false,           // no-wait
+		nil,             // arguments
+	); err != nil {
+		log.Printf("Failed to bind queue %s to exchange: %s", queue.Name, err)
+		return amqp.Queue{}, err
+	}
+	log.Printf("Queue %s declared and bound to exchange", queue.Name)
+	return queue, nil
+}
+func ConsumeAndHandleNotification(queueName string, handle func(msg []byte)) {
 	//3. Consume messages from the notification queue
 	go func() {
-		msgs, err := channel.Consume(
-			notiQueue.Name,
+		msgs, err := Channel.Consume(
+			queueName,
 			"",
 			true,  // auto-acknowledge
 			false, // exclusive
@@ -78,28 +101,31 @@ func ConsumeAndHandleMessage() {
 			log.Println("Started consuming messages from notification queue")
 		}
 		for msg := range msgs {
-			ws.HandleNotificationsWS(msg.Body)
+			log.Printf("Received notification message from MQ now Send to WS: %s", msg.Body)
+			handle(msg.Body)
 		}
 	}()
+}
+func ConsumeAndHandleSensor(queueName string, handle func(msg []byte)) {
 	//4. Consume messages from the sensor queue
+	msgs, err := Channel.Consume(
+		queueName,
+		"",
+		true,  // auto-acknowledge
+		false, // exclusive
+		false, // no-local
+		false, // no-wait
+		nil,   // arguments
+	)
+	if err != nil {
+		log.Fatalf("Failed to consume messages from sensor queue: %s", err)
+	} else {
+		log.Println("Started consuming messages from sensor queue")
+	}
 	go func() {
-		msgs, err := channel.Consume(
-			sensorQueue.Name,
-			"",
-			true,  // auto-acknowledge
-			false, // exclusive
-			false, // no-local
-			false, // no-wait
-			nil,   // arguments
-		)
-		if err != nil {
-			log.Fatalf("Failed to consume messages from sensor queue: %s", err)
-		} else {
-			log.Println("Started consuming messages from sensor queue")
-		}
 		for msg := range msgs {
 			log.Printf("Received sensor message from MQ now Send to WS: %s", msg.Body)
-			ws.HandleSensorNotificationsWS(msg.Body)
+			handle(msg.Body)
 		}
 	}()
 }

@@ -51,6 +51,17 @@ func HandleNotificationsWS(message []byte) {
 		}
 	}
 }
+func HandleSensorWS(message []byte) {
+	for client := range sensorClients {
+		if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+			log.Printf("❌ Failed to send message to sensor client: %v", err)
+			client.Close()
+			delete(sensorClients, client)
+		} else {
+			log.Printf("📢 Sent to sensor client: %s", message)
+		}
+	}
+}
 
 // ==========================
 // === SENSOR WS HANDLER ====
@@ -82,17 +93,4 @@ func SensorWsHandler(c *gin.Context) {
 			}
 		}
 	}()
-}
-
-// Send message to all sensor clients
-func HandleSensorNotificationsWS(message []byte) {
-	for client := range sensorClients {
-		if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-			log.Printf("❌ Failed to send message to sensor client: %v", err)
-			client.Close()
-			delete(sensorClients, client)
-		} else {
-			log.Printf("📡 Sent to sensor client: %s", message)
-		}
-	}
 }

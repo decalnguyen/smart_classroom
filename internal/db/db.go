@@ -2,7 +2,7 @@ package db
 
 import (
 	"log"
-	"smart_classroom/models"
+	"smart_classroom/internal/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -29,7 +29,9 @@ func InitDB() {
 	}
 	modelsToMigrate := []interface{}{
 		&models.SenSorData{},
+
 		//&models.User{},
+		&models.Face{},
 		&models.Notification{},
 		&models.Sensor{},
 		&models.Building{},

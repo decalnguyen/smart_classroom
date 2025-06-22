@@ -4,9 +4,9 @@ import (
 	"log"
 	"net/http"
 
-	"smart_classroom/db"
-	"smart_classroom/models"
-	"smart_classroom/utils"
+	"smart_classroom/internal/db"
+	"smart_classroom/internal/models"
+	"smart_classroom/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

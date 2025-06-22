@@ -92,3 +92,9 @@ type Schedule struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+type Face struct {
+	ID            int    `gorm:"primaryKey" json:"id"`
+	StudentID     string `gorm:"index" json:"student_id"` // Foreign key to Student.StudentID
+	StudentName   string `json:"student_name"`            // Name of the student
+	FaceEmbedding []byte `json:"face_embedding"`
+}
