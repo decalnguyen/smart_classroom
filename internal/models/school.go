@@ -38,6 +38,7 @@ type ClassStudent struct {
 }
 type Student struct {
 	StudentID   uint    `gorm:"primaryKey" json:"student_id"`
+	MSSV        string  `gorm:"index" json:"mssv"` // student code (e.g. 22520001)
 	StudentName string  `json:"student_name"`
 	Age         int     `json:"age"`
 	Phone       string  `json:"phone"`
@@ -56,6 +57,7 @@ type Teacher struct {
 	TeacherID   uint   `gorm:"primaryKey" json:"teacher_id"`
 	TeacherName string `json:"teacher_name"`
 	Subject     string `json:"subject"`
+	AccountID   string `json:"account_id"` // optional link to a User account
 }
 
 type ClassroomTeacher struct {

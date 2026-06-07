@@ -9,37 +9,69 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Middleware to restrict access to teachers only
-func TeacherOnlyMiddleware() gin.HandlerFunc {
+// ExtractToken pulls the JWT from either the `Authorization: Bearer <token>`
+// header or the `auth_token` cookie, so both the SPA (header) and any
+// cookie-based client work uniformly.
+func ExtractToken(c *gin.Context) string {
+	auth := c.GetHeader("Authorization")
+	if auth != "" {
+		// Accept both "Bearer <token>" and a raw token.
+		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+			return strings.TrimSpace(auth[7:])
+		}
+		return strings.TrimSpace(auth)
+	}
+	if cookie, err := c.Cookie("auth_token"); err == nil {
+		return cookie
+	}
+	return ""
+}
+
+// RequireRole returns a middleware that authenticates the request and, if any
+// roles are provided, ensures the caller's role is one of them. Calling it with
+// no roles means "any authenticated user". On success it stores account_id and
+// role in the gin context for downstream handlers.
+func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, err := c.Cookie("auth_token")
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			c.Abort()
+		token := ExtractToken(c)
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing authentication token"})
 			return
 		}
 
-		// Validate the token and check the role
-		username, err := utils.ValidateJWT(token)
+		claims, err := utils.ParseClaims(token)
 		if err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access restricted to teachers only"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 			return
 		}
 
-		// Add the username to the context for further use
-		c.Set("username", username)
+		c.Set("account_id", claims.AccountID)
+		c.Set("role", claims.Role)
+
+		if len(roles) > 0 {
+			allowed := false
+			for _, r := range roles {
+				if claims.Role == r {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions for this action"})
+				return
+			}
+		}
+
 		c.Next()
 	}
 }
 
-// Middleware to restrict access to the classroom network
-func ClassroomNetworkMiddleware() gin.HandlerFunc {
+// ClassroomNetworkMiddleware restricts access to a classroom LAN prefix.
+// Kept available (opt-in) for deployments that want network-level gating.
+func ClassroomNetworkMiddleware(prefix string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		clientIP := c.ClientIP()
-		if !strings.HasPrefix(clientIP, "192.168.1.") { // Replace with your network prefix
-			c.JSON(http.StatusForbidden, gin.H{"error": "Access restricted to classroom network"})
-			c.Abort()
+		if !strings.HasPrefix(c.ClientIP(), prefix) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access restricted to classroom network"})
 			return
 		}
 		c.Next()

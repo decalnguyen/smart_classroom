@@ -1,0 +1,15 @@
+FROM golang:latest AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+ENV GOPROXY=direct
+RUN go mod download
+
+COPY . .
+RUN go build -o build ./server/simulator
+
+FROM ubuntu
+WORKDIR /app
+COPY --from=builder /app/build .
+ENTRYPOINT ["/app/build"]

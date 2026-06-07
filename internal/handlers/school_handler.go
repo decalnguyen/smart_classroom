@@ -2,18 +2,29 @@ package handlers
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"smart_classroom/internal/db"
 	"smart_classroom/internal/models"
 	"smart_classroom/internal/rabbitmq"
-	"smart_classroom/internal/utils"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 )
+
+// parseUintParam converts a path param to uint (0 on failure).
+func parseUintParam(s string) uint {
+	n, _ := strconv.ParseUint(s, 10, 64)
+	return uint(n)
+}
+
+// periodTime maps a class to a display period slot (cosmetic, deterministic).
+func periodTime(classID uint) string {
+	slots := []string{"07:00 - 09:30", "09:45 - 12:00", "13:00 - 15:30", "15:45 - 18:00"}
+	return slots[int(classID)%len(slots)]
+}
 
 func HandleGetBuildings(c *gin.Context) {
 	var buildings []models.Building
@@ -51,6 +62,7 @@ func HandlePutBuilding(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	building.BuildingID = parseUintParam(id) // prevent PK change via body
 	if err := db.DB.Save(&building).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update building"})
 		return
@@ -103,6 +115,7 @@ func HandlePutClassroom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	classroom.ClassroomID = parseUintParam(id) // prevent PK change via body
 	if err := db.DB.Save(&classroom).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update classroom"})
 		return
@@ -119,13 +132,13 @@ func HandleDeleteClassroom(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Classroom deleted"})
 }
 func HandleGetClass(c *gin.Context) {
-	var class []models.Class
+	var class models.Class
 	now := time.Now()
 	weekday := now.Weekday().String()
-	classroomID := c.Param("classroom_id")
+	classroomID := c.Param("id")
 	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
 		classroomID, weekday, now, now).First(&class).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve classes"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "No ongoing class found"})
 		return
 	}
 	c.JSON(http.StatusOK, class)
@@ -156,6 +169,7 @@ func HandlePutClass(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	class.ClassID = parseUintParam(id) // prevent PK change via body
 	if err := db.DB.Save(&class).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update class"})
 		return
@@ -172,10 +186,36 @@ func HandleDeleteClass(c *gin.Context) {
 }
 func HandleGetStudents(c *gin.Context) {
 	var students []models.Student
-	if err := db.DB.Find(&students).Error; err != nil {
+	q := db.DB.Model(&models.Student{})
+
+	// Optional search by name or MSSV/id.
+	if search := c.Query("search"); search != "" {
+		like := "%" + search + "%"
+		q = q.Where("student_name ILIKE ? OR mssv ILIKE ? OR CAST(student_id AS TEXT) ILIKE ?", like, like, like)
+	}
+
+	var total int64
+	q.Count(&total)
+
+	// Optional pagination (limit/offset). Capped to avoid huge payloads.
+	if limit, err := strconv.Atoi(c.Query("limit")); err == nil && limit > 0 {
+		if limit > 200 {
+			limit = 200
+		}
+		offset, _ := strconv.Atoi(c.Query("offset"))
+		if offset < 0 {
+			offset = 0
+		}
+		q = q.Limit(limit).Offset(offset)
+	} else {
+		q = q.Limit(2000) // safety cap when no pagination requested
+	}
+
+	if err := q.Order("student_id asc").Find(&students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve students"})
 		return
 	}
+	c.Header("X-Total-Count", strconv.FormatInt(total, 10))
 	c.JSON(http.StatusOK, students)
 }
 
@@ -206,6 +246,7 @@ func HandlePutStudent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	student.StudentID = parseUintParam(id) // prevent PK change via body
 	if err := db.DB.Save(&student).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update student"})
 		return
@@ -257,6 +298,7 @@ func HandlePutTeacher(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	teacher.TeacherID = parseUintParam(id) // prevent PK change via body
 	if err := db.DB.Save(&teacher).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update teacher"})
 		return
@@ -273,40 +315,51 @@ func HandleDeleteTeacher(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Teacher deleted"})
 }
 func HandleGetSchedules(c *gin.Context) {
-	// Extract user ID from JWT
-	token := c.GetHeader("Authorization")
-	accountID, err := utils.ValidateJWT(token)
-	println("AccountID from token (GET):", accountID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-		return
-	}
-
-	var schedules []models.Schedule
-	if err := db.DB.Where("account_id = ?", accountID).Find(&schedules).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve schedules"})
+	// account_id is set by the auth middleware.
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
 	weekly := map[string][]gin.H{
-		"Monday":    {},
-		"Tuesday":   {},
-		"Wednesday": {},
-		"Thursday":  {},
-		"Friday":    {},
-		"Saturday":  {},
-		"Sunday":    {},
+		"Monday": {}, "Tuesday": {}, "Wednesday": {}, "Thursday": {},
+		"Friday": {}, "Saturday": {}, "Sunday": {},
 	}
-	for _, s := range schedules {
-		day := s.Day // "Monday", "Tuesday", ...
-		session := gin.H{
-			"time":  s.Time,
-			"title": s.Title,
-			"desc":  s.Desc,
-			"room":  s.Room,
+
+	// For a linked student, derive the timetable from real class enrollment.
+	if c.GetString("role") == "student" {
+		var student models.Student
+		if err := db.DB.Where("account_id = ?", accountID).First(&student).Error; err == nil {
+			var classes []models.Class
+			db.DB.Joins("JOIN class_students cs ON cs.class_id = classes.class_id").
+				Where("cs.student_id = ?", student.StudentID).Find(&classes)
+			rooms := map[uint]string{}
+			var crs []models.Classroom
+			db.DB.Find(&crs)
+			for _, r := range crs {
+				rooms[r.ClassroomID] = r.ClassroomName
+			}
+			for _, cl := range classes {
+				if _, ok := weekly[cl.DayOfWeek]; !ok {
+					continue
+				}
+				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
+					"time":  periodTime(cl.ClassID),
+					"title": cl.Subject,
+					"room":  rooms[cl.ClassroomID],
+					"desc":  "Lớp được phân công",
+				})
+			}
 		}
-		if _, ok := weekly[day]; ok {
-			weekly[day] = append(weekly[day], session)
+	}
+
+	// Merge any personal (free-text) schedule entries for this account.
+	var schedules []models.Schedule
+	db.DB.Where("account_id = ?", accountID).Find(&schedules)
+	for _, s := range schedules {
+		if _, ok := weekly[s.Day]; ok {
+			weekly[s.Day] = append(weekly[s.Day], gin.H{"time": s.Time, "title": s.Title, "desc": s.Desc, "room": s.Room})
 		}
 	}
 
@@ -314,11 +367,9 @@ func HandleGetSchedules(c *gin.Context) {
 }
 
 func HandlePostSchedule(c *gin.Context) {
-	// Extract user ID from JWT
-	token := c.GetHeader("Authorization")
-	accountID, err := utils.ValidateJWT(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
@@ -340,19 +391,17 @@ func HandlePostSchedule(c *gin.Context) {
 }
 
 func HandlePutSchedule(c *gin.Context) {
-	// Extract user ID from JWT
-	token := c.GetHeader("Authorization")
-	userID, err := utils.ValidateJWT(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
 	id := c.Param("id")
 	var schedule models.Schedule
 
-	// Find the schedule by ID and user ID
-	if err := db.DB.Where("id = ? AND user_id = ?", id, userID).First(&schedule).Error; err != nil {
+	// Find the schedule by ID, scoped to the owner (ownership check).
+	if err := db.DB.Where("id = ? AND account_id = ?", id, accountID).First(&schedule).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Schedule not found"})
 		return
 	}
@@ -371,18 +420,16 @@ func HandlePutSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Schedule updated"})
 }
 func HandleDeleteSchedule(c *gin.Context) {
-	// Extract user ID from JWT
-	token := c.GetHeader("Authorization")
-	userID, err := utils.ValidateJWT(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
 	id := c.Param("id")
 
-	// Delete the schedule by ID and user ID
-	if err := db.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Schedule{}).Error; err != nil {
+	// Delete the schedule by ID, scoped to the owner (ownership check).
+	if err := db.DB.Where("id = ? AND account_id = ?", id, accountID).Delete(&models.Schedule{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete schedule"})
 		return
 	}
@@ -392,15 +439,28 @@ func HandleDeleteSchedule(c *gin.Context) {
 
 func HandleGetAttendance(c *gin.Context) {
 	classroomID := c.Query("classroom_id")
+
+	// Teachers may only view classrooms assigned to them.
+	if c.GetString("role") == "teacher" {
+		ids, _ := scopedClassroomIDs(c)
+		if !containsUint(ids, parseUintParam(classroomID)) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không được phân công lớp này"})
+			return
+		}
+	}
+
 	loc := time.FixedZone("UTC+7", 7*60*60) // or "Asia/Bangkok", etc.
 	now := time.Now().In(loc)
 	weekday := now.Weekday().String()
-	// Find the class that is currently ongoing in the specified classroom
+	// Find the class that is currently ongoing in the specified classroom.
+	// NOTE: Pluck requires the model/table to be set explicitly.
 	var classID uint
-	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-		classroomID, weekday, now, now).
-		Pluck("class_id", &classID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
+	db.DB.Model(&models.Class{}).
+		Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
+			classroomID, weekday, now, now).
+		Limit(1).Pluck("class_id", &classID)
+	if classID == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No ongoing class in this classroom"})
 		return
 	}
 	// Get the list of students enrolled in the class
@@ -412,35 +472,45 @@ func HandleGetAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get enrolled students"})
 		return
 	}
-	// Get the IDs of students who are present today
-	var presentStudentIDs []uint
-	if err := db.DB.Model(&models.Attendance{}).
-		Where("class_id = ? AND date = ? AND attendance_status = ?", classID, now.Format("2006-01-02"), "present").
-		Pluck("student_id", &presentStudentIDs).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get attendance records"})
-		return
+	// Map each student's attendance status today (present / late). Present wins
+	// over late if both exist.
+	type attRow struct {
+		StudentID        uint
+		AttendanceStatus string
 	}
+	var attRows []attRow
+	db.DB.Model(&models.Attendance{}).
+		Select("student_id, attendance_status").
+		Where("class_id = ? AND date = ?", classID, now.Format("2006-01-02")).
+		Scan(&attRows)
+	statusMap := map[uint]string{}
+	for _, r := range attRows {
+		if statusMap[r.StudentID] == "present" {
+			continue
+		}
+		statusMap[r.StudentID] = r.AttendanceStatus
+	}
+
+	// Privacy: only staff see contact details; students do not see peers' phone/email.
+	includeContact := c.GetString("role") != "student"
+
 	results := []gin.H{}
-	presentMap := map[uint]bool{}
-	for _, student := range presentStudentIDs {
-		// Check if the student is present today
-		presentMap[student] = true
-	}
 	for _, student := range enrolledStudents {
-		// Create a response structure for each student
-		status := "unknown"
-		if presentMap[student.StudentID] {
-			status = "present"
-		} else {
+		status := statusMap[student.StudentID]
+		if status == "" {
 			status = "absent"
 		}
-		results = append(results, gin.H{
+		row := gin.H{
 			"student_id":   student.StudentID,
+			"mssv":         student.MSSV,
 			"student_name": student.StudentName,
 			"status":       status,
-			"phone":        student.Phone,
-			"email":        student.Email,
-		})
+		}
+		if includeContact {
+			row["phone"] = student.Phone
+			row["email"] = student.Email
+		}
+		results = append(results, row)
 	}
 	c.JSON(http.StatusOK, results)
 }
@@ -449,7 +519,6 @@ func HandlePostAttendance(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&attendance); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-		log.Printf("Parsed input: %+v\n", attendance)
 		return
 	}
 

@@ -3,7 +3,8 @@ package models
 import "time"
 
 type SenSorData struct {
-	DeviceID   string    `gorm:"primaryKey" json:"device_id"`
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	DeviceID   string    `gorm:"index" json:"device_id"`
 	DeviceType string    `json:"device_type"`
 	Value      float64   `json:"value"`
 	Status     string    `json:"status"`

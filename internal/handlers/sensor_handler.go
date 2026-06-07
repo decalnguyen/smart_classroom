@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log"
 	"net/http"
+	"regexp"
 	"time"
 
 	"fmt"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// deviceIdent restricts device type/id to a safe charset to avoid SSRF/URL injection.
+var deviceIdent = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,128}$`)
 
 func SensorChecker() {
 	go func() {
@@ -25,8 +29,8 @@ func SensorChecker() {
 func CheckSensorStatus() {
 	var sensors []models.Sensor
 
-	// Fetch all sensors from the database
-	if err := db.DB.Where("status = ?", "Activate").Find(&sensors).Error; err != nil {
+	// Fetch all active sensors from the database
+	if err := db.DB.Where("status = ?", "Active").Find(&sensors).Error; err != nil {
 		log.Printf("Error fetching sensors: %v", err)
 		return
 	}
@@ -58,26 +62,31 @@ func HandlePostSensorData(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	if data.DeviceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "device_id is required"})
+		return
+	}
 	loc := time.FixedZone("UTC+7", 7*60*60) // Vietnam Time
-	nowVN := time.Now().In(loc)
-	data.Timestamp = nowVN
+	data.Timestamp = time.Now().In(loc)
+	if data.Status == "" {
+		data.Status = "active"
+	}
 
 	if err := db.DB.Create(&data).Error; err != nil {
-		if err := db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
-			Updates(map[string]interface{}{
-				"timestamp": time.Now(),
-				"status":    "Active",
-			}).Error; err != nil {
-			log.Printf("Error updating sensor timestamp: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update timestamp"})
-		}
-		log.Printf("Error saving to database: %v", err)
+		log.Printf("Error saving sensor data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save data"})
 		return
 	}
-	// Publish the sensor data to RabbitMQ
-	log.Printf("Received sensor data: %+v", data)
+
+	// Heartbeat: mark the owning sensor as active (no-op if it isn't registered).
+	db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
+		Updates(map[string]interface{}{"timestamp": data.Timestamp, "status": "Active"})
+
+	// Publish to the realtime sensor channel only AFTER a successful DB write.
 	rabbitmq.Publish("sensor.data", data)
+
+	// Safety: evaluate danger thresholds and raise an alert if breached.
+	go EvaluateAndAlert(data)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Data received"})
 }
@@ -106,16 +115,18 @@ func HandlePutSensorData(c *gin.Context) {
 		return
 	}
 	var existingData models.SenSorData
-	if err := db.DB.Where("device_id = ?", deviceID).First(&existingData).Error; err != nil {
-		log.Printf("Device ID not found: %s", data.DeviceID)
+	if err := db.DB.Where("device_id = ?", deviceID).Order("timestamp desc").First(&existingData).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Sensor data not found"})
 		return
-	} else {
-		existingData.Value = data.Value
-		if err := db.DB.Save(&data).Error; err != nil {
-			log.Printf("Error updating database: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update data"})
-			return
-		}
+	}
+	existingData.Value = data.Value
+	if data.Status != "" {
+		existingData.Status = data.Status
+	}
+	if err := db.DB.Save(&existingData).Error; err != nil {
+		log.Printf("Error updating database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update data"})
+		return
 	}
 
 	log.Printf("Updated sensor data: %+v", existingData)
@@ -142,8 +153,7 @@ func HandlePostSensor(c *gin.Context) {
 	}
 	sensor.Timestamp = time.Now()
 	if err := db.DB.Where("device_id = ?", sensor.DeviceID).First(&sensor).Error; err == nil {
-		log.Printf("Device ID already exists: %s", sensor.DeviceID)
-		c.JSON(http.StatusOK, gin.H{"message": "Sensor already exists"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Sensor already exists"})
 		return
 	} else if err := db.DB.Create(&sensor).Error; err != nil {
 		log.Printf("Error saving sensor: %v", err)
@@ -164,14 +174,14 @@ func HandlePutSensor(c *gin.Context) {
 
 	var existingSensor models.Sensor
 	if err := db.DB.Where("device_id = ?", deviceID).First(&existingSensor).Error; err != nil {
-		log.Printf("Device ID not found: %s", sensor.DeviceID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
 	} else {
 		existingSensor.DeviceName = sensor.DeviceName
 		existingSensor.DeviceType = sensor.DeviceType
 		existingSensor.Location = sensor.Location
 		existingSensor.Status = sensor.Status
-		if err := db.DB.Save(&sensor).Error; err != nil {
+		if err := db.DB.Save(&existingSensor).Error; err != nil {
 			log.Printf("Error updating database: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update sensor"})
 			return
@@ -227,8 +237,8 @@ func HandlePutElectricity(c *gin.Context) {
 	id := c.Param("id")
 	var electricity models.Electricity
 
-	// Find the electricity record by ID
-	if err := db.DB.First(&electricity, "electricity_id = ?", id).Error; err != nil {
+	// Find the electricity record by its device id
+	if err := db.DB.First(&electricity, "device_id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Electricity record not found"})
 		return
 	}
@@ -249,8 +259,8 @@ func HandlePutElectricity(c *gin.Context) {
 func HandleDeleteElectricity(c *gin.Context) {
 	id := c.Param("id")
 
-	// Delete the electricity record by ID
-	if err := db.DB.Delete(&models.Electricity{}, "electricity_id = ?", id).Error; err != nil {
+	// Delete the electricity record by its device id
+	if err := db.DB.Delete(&models.Electricity{}, "device_id = ?", id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete electricity record"})
 		return
 	}
@@ -262,22 +272,37 @@ func HandlePostDeviceMode(c *gin.Context) {
 	deviceType := c.Param("device_type")
 
 	var req struct {
-		Mode string `json:"mode"`
+		Mode int `json:"mode"`
+	}
+
+	// Validate identifiers to prevent URL/SSRF injection.
+	if !deviceIdent.MatchString(deviceType) || !deviceIdent.MatchString(deviceID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device identifier"})
+		return
+	}
+
+	// Parse JSON input first, then build the command payload.
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
 	}
 
 	espURL := fmt.Sprintf("http://%s/%s", deviceType, deviceID)
 	payload := fmt.Sprintf(`{"mode": %d}`, req.Mode)
 
-	// Parse JSON input
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-		return
-	}
-	// Update the dimmer value in the database
+	// Broadcast the command so other consumers / the UI can react regardless of
+	// whether physical hardware is reachable.
+	rabbitmq.Publish("command.device", gin.H{
+		"device_type": deviceType,
+		"device_id":   deviceID,
+		"mode":        req.Mode,
+	})
 
-	resp, err := http.Post(espURL, "application/json", bytes.NewBuffer([]byte(payload)))
+	resp, err := http.Post(espURL, "application/json", bytes.NewBufferString(payload))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to ESP32"})
+		// No physical device in the demo: accept and queue the command.
+		log.Printf("Device %s/%s unreachable (queued command): %v", deviceType, deviceID, err)
+		c.JSON(http.StatusOK, gin.H{"message": "Command queued (device offline)", "device": deviceType, "mode": req.Mode})
 		return
 	}
 	defer resp.Body.Close()

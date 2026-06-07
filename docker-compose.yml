@@ -1,33 +1,54 @@
-version: '3'
-networks: 
-  smart_classroom: 
+networks:
+  smart_classroom:
     driver: bridge
 
-services: 
+services:
   auth-frontend:
     restart: always
     container_name: auth-frontend
     build: ./auth-frontend
     ports:
       - 3000:80
+    depends_on:
+      - backend
+      - websocket
     networks:
       - smart_classroom
+
   backend:
     restart: always
     container_name: backend
     build:
       context: .
       dockerfile: server/http-api/Dockerfile
+    environment:
+      DB_HOST: postgres
+      DB_USER: ${POSTGRES_USER:-nhattoan}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-test123}
+      DB_NAME: ${POSTGRES_DB:-sensordata}
+      DB_PORT: "5432"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      JWT_SECRET: ${JWT_SECRET:-dev_insecure_secret_change_me}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
+      TEMP_THRESHOLD: ${TEMP_THRESHOLD:-50}
     ports:
-      - 8081:8081
+      # Host 8091 -> container 8081 (8081 is taken by another app on this host).
+      - ${BACKEND_HOST_PORT:-8091}:8081
+    depends_on:
+      - postgres
+      - rabbitmq
     networks:
       - smart_classroom
+
   websocket:
     restart: always
     container_name: websocket
     build:
       context: .
       dockerfile: server/ws/Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     ports:
       - 8082:8082
     depends_on:
@@ -35,29 +56,45 @@ services:
       - postgres
     networks:
       - smart_classroom
+
+  simulator:
+    restart: always
+    container_name: simulator
+    build:
+      context: .
+      dockerfile: server/simulator/Dockerfile
+    environment:
+      API_URL: http://backend:8081/sensor
+      ROOM_ID: ${ROOM_ID:-A101}
+      INTERVAL_SECONDS: ${SIM_INTERVAL:-5}
+      SPIKE_EVERY: ${SIM_SPIKE_EVERY:-12}
+      SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
+    depends_on:
+      - backend
+    networks:
+      - smart_classroom
+
   postgres:
     restart: always
     container_name: postgres
-    build: ./Database 
+    build: ./Database
     environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nhattoan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-test123}
+      POSTGRES_DB: ${POSTGRES_DB:-sensordata}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - 5432:5432
-    volumes: 
+    volumes:
       - progresDB_data:/var/lib/postgresql/data
-      - ./Database/postgres.conf:/database/config/postgres.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nhattoan} -d ${POSTGRES_DB:-sensordata}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - smart_classroom
-  notification:
-    restart: always
-    container_name: notificationwk
-    build:
-      context: .
-      dockerfile: notificationwk/Dockerfile
-    depends_on:
-      - rabbitmq
-    networks:
-      - smart_classroom
+
   rabbitmq:
     restart: always
     container_name: rabbitmq
@@ -65,10 +102,15 @@ services:
     ports:
       - 5672:5672
       - 15672:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - smart_classroom
     volumes:
-    - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
 
 volumes:
   progresDB_data:

@@ -1,68 +1,77 @@
-import React from "react";
-import Login from "./components/Login.js";
-import SignUp from "./components/SignUp.js";
-import Calendar from "./components/calendar/calendar.jsx";
-import "./App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { ColorModeContext, useMode } from "./theme.js";
-import { CssBaseline, ThemeProvider } from "@mui/material";
-import Topbar from "./components/global/Topbar.jsx";
-import Sidebar from "./components/global/Sidebar.jsx";
-import Dashboard from "./components/dashboard/dashboard.jsx";
-import Student from "./components/student/student.jsx";
-import Attandance from "./components/attandance/attandance.jsx";
-import BarChart from "./components/charts/BarChart.jsx";
-import PieChart from "./components/charts/PieChart.jsx";
-import LineChart from "./components/charts/LineChart.jsx";
-import { useAuth, AuthProvider } from "./AuthContext.jsx";
-import { PrivateRoutes, PublicRoutes } from "./Routes.js";
-import { useLocation } from "react-router-dom";
-import CalendarComponent from "./components/Calendar.js";
+import { lazy, Suspense } from 'react'
+import { Routes, Route } from 'react-router-dom'
+import { Box, CircularProgress } from '@mui/material'
+import ProtectedRoute from './components/ProtectedRoute'
+import Layout from './components/Layout'
+import { RealtimeProvider } from './context/RealtimeContext'
 
-function AppContent() {
-  const location = useLocation();
-  const hideSidebar = location.pathname === "/login" || location.pathname === "/signup";
-  const [theme, colorMode] = useMode();
+// Code-split each page so the initial bundle stays small.
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Sensors = lazy(() => import('./pages/Sensors'))
+const Attendance = lazy(() => import('./pages/Attendance'))
+const Schedule = lazy(() => import('./pages/Schedule'))
+const Notifications = lazy(() => import('./pages/Notifications'))
+const MyAttendance = lazy(() => import('./pages/MyAttendance'))
+const Reports = lazy(() => import('./pages/Reports'))
+const Admin = lazy(() => import('./pages/Admin'))
+const NotFound = lazy(() => import('./pages/NotFound'))
+
+function Loading() {
   return (
-    <AuthProvider>
-      <ColorModeContext.Provider value={colorMode}>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <div className="app">
-            {!hideSidebar && <Sidebar />}
-            <main className="content">
-              {!hideSidebar && <Topbar />}
-              <Routes>
-                {/* Public Routes */}
-                <Route path="/login" element={<PublicRoutes element={<Login />} />} />
-                <Route path="/signup" element={<PublicRoutes element={<SignUp />} />} /> 
-
-                {/* Private Routes */}
-                <Route path="/dashboard" element={<PrivateRoutes element={<Dashboard />} />} />
-                <Route path="/students" element={<PrivateRoutes element={<Student />} />} />
-                <Route path="/attandance" element={<PrivateRoutes element={<Attandance />} />} />
-                <Route path="/calendar" element={<PrivateRoutes element={<Calendar />} />} />
-                <Route path="/calendarComp" element={<PrivateRoutes element={<CalendarComponent />} />} />
-                <Route path="/barchart" element={<PrivateRoutes element={<BarChart />} />} />
-                <Route path="/piechart" element={<PrivateRoutes element={<PieChart />} />} /> 
-                <Route path="/linechart" element={<PrivateRoutes element={<LineChart />} />} /> 
-              </Routes>
-            </main>
-          </div>
-        </ThemeProvider>
-      </ColorModeContext.Provider>
-    </AuthProvider>
-  );
+    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
+      <CircularProgress />
+    </Box>
+  )
 }
 
-function App() {
+export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </BrowserRouter>
-  );
-}
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
 
-export default App;
+        <Route
+          element={
+            <ProtectedRoute>
+              <RealtimeProvider>
+                <Layout />
+              </RealtimeProvider>
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/sensors" element={<Sensors />} />
+          <Route
+            path="/attendance"
+            element={
+              <ProtectedRoute roles={['admin', 'teacher']}>
+                <Attendance />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/my-attendance" element={<MyAttendance />} />
+          <Route path="/schedule" element={<Schedule />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute roles={['admin', 'teacher']}>
+                <Reports />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <Admin />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<NotFound />} />
+        </Route>
+      </Routes>
+    </Suspense>
+  )
+}
