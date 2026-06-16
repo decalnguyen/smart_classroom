@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Box,
   Card,
@@ -24,6 +24,9 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  MenuItem,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material'
 import LightModeIcon from '@mui/icons-material/LightMode'
 import ThermostatIcon from '@mui/icons-material/Thermostat'
@@ -31,6 +34,8 @@ import WaterDropIcon from '@mui/icons-material/WaterDrop'
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import AcUnitIcon from '@mui/icons-material/AcUnit'
+import LedIcon from '@mui/icons-material/Highlight'
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -52,6 +57,21 @@ const EMPTY_FORM = {
   status: 'Active',
 }
 
+// Actuators controllable from the UI. `levels` lists the allowed command values:
+// the fan has speeds 0–3; on/off devices (đèn/LED/còi) are just 0 (off) / 1 (on).
+const ACTUATORS = [
+  { type: 'light', label: 'Đèn', icon: LightbulbIcon, color: '#f59e0b', levels: [0, 1] },
+  { type: 'fan', label: 'Quạt', icon: AcUnitIcon, color: '#0284c7', levels: [0, 1, 2, 3] },
+  { type: 'led', label: 'LED', icon: LedIcon, color: '#16a34a', levels: [0, 1] },
+  { type: 'buzzer', label: 'Còi', icon: NotificationsActiveIcon, color: '#dc2626', levels: [0, 1] },
+]
+
+// Label for a level button: 0 → "Tắt"; on/off device 1 → "Bật"; fan → the number.
+function levelLabel(actuator, n) {
+  if (n === 0) return 'Tắt'
+  return actuator.levels.length === 2 ? 'Bật' : n
+}
+
 function fmtTs(ts) {
   if (!ts) return '--'
   const d = dayjs(ts)
@@ -63,7 +83,8 @@ export default function Sensors() {
   const isAdmin = role === 'admin'
   const canControl = role === 'admin' || role === 'teacher'
 
-  const { latest, status } = useSensorStream()
+  const [room, setRoom] = useState('A101')
+  const { latest, status } = useSensorStream(40, room)
   const online = status === 'open'
 
   const [devices, setDevices] = useState([])
@@ -78,16 +99,58 @@ export default function Sensors() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
 
-  // Device control toggle states.
-  const [light, setLight] = useState(false)
-  const [fan, setFan] = useState(false)
+  // Actuator command levels (0–3) per device type (optimistic, reset per room).
+  const [levels, setLevels] = useState({ light: 0, fan: 0, led: 0, buzzer: 0 })
   const [busyCtrl, setBusyCtrl] = useState(null)
+  useEffect(() => { setLevels({ light: 0, fan: 0, led: 0, buzzer: 0 }) }, [room])
+
+  // Room list derived from registered devices (+ the wired classrooms A101–A103).
+  const rooms = useMemo(() => {
+    const set = new Set(['A101', 'A102', 'A103'])
+    devices.forEach((d) => {
+      const r = (d.device_id || '').split('-')[0]
+      if (r) set.add(r)
+    })
+    return [...set].sort()
+  }, [devices])
 
   // Latest numeric value for a metric, or null when not yet received.
   const num = (m) => {
     const v = latest[m] ? latest[m].value : null
     return v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v)
   }
+
+  // Actuator level the DEVICE itself reports (echoed on /<room>/<type>/value),
+  // scoped to the selected room and clamped to 0–3 (ignores e.g. the LDR lux on
+  // the "light" topic). null when the device hasn't reported a valid level.
+  const liveLevel = (type) => {
+    const e = latest[type]
+    if (e && e.device_id === `${room}-${type}`) {
+      const v = Number(e.value)
+      if (Number.isInteger(v) && v >= 0 && v <= 3) return v
+    }
+    return null
+  }
+
+  // Keep the selector in sync with what the device actually reports — so a
+  // fire-alarm buzzer (or any external change) shows up AND the operator can
+  // turn it off. User clicks set it optimistically; echoes reconcile it.
+  useEffect(() => {
+    setLevels((prev) => {
+      let next = null
+      for (const a of ACTUATORS) {
+        const e = latest[a.type]
+        if (e && e.device_id === `${room}-${a.type}`) {
+          const v = Number(e.value)
+          if (Number.isInteger(v) && v >= 0 && v <= 3 && v !== prev[a.type]) {
+            if (!next) next = { ...prev }
+            next[a.type] = v
+          }
+        }
+      }
+      return next || prev
+    })
+  }, [latest, room])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -173,19 +236,16 @@ export default function Sensors() {
     }
   }
 
-  const control = async (type, on) => {
+  // Send an actuator command at the given level (0–3) to the selected room.
+  const control = async (type, level) => {
     setBusyCtrl(type)
     try {
-      const { data } = await sensorApi.setDeviceMode(type, `A101-${type}`, on ? 1 : 0)
-      const label = type === 'light' ? 'đèn' : 'quạt'
-      const queued = typeof data === 'string' && data.toLowerCase().includes('queued')
-      if (type === 'light') setLight(on)
-      else setFan(on)
+      await sensorApi.setDeviceMode(type, `${room}-${type}`, level)
+      setLevels((prev) => ({ ...prev, [type]: level }))
+      const label = ACTUATORS.find((a) => a.type === type)?.label || type
       setToast({
-        severity: queued ? 'info' : 'success',
-        msg: queued
-          ? `Lệnh ${label} đã xếp hàng (thiết bị ngoại tuyến): ${on ? 'BẬT' : 'TẮT'}`
-          : `Đã gửi lệnh ${label}: ${on ? 'BẬT' : 'TẮT'}`,
+        severity: 'success',
+        msg: level === 0 ? `Đã tắt ${label}` : `Đã đặt ${label} mức ${level}`,
       })
     } catch (err) {
       setToast({ severity: 'error', msg: apiError(err, 'Gửi lệnh thất bại.') })
@@ -260,67 +320,70 @@ export default function Sensors() {
         />
       </Box>
 
-      {/* Device control card (admin / teacher only) */}
+      {/* Device control card (admin / teacher only) — command level 0–3 */}
       {canControl && (
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" mb={2}>
-              Điều khiển thiết bị (A101)
-            </Typography>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <LightbulbIcon sx={{ color: light ? '#f59e0b' : 'text.disabled' }} />
-                  <Typography>Đèn LED</Typography>
-                </Stack>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    size="small"
-                    variant={light ? 'contained' : 'outlined'}
-                    color="warning"
-                    disabled={busyCtrl === 'light'}
-                    onClick={() => control('light', true)}
-                  >
-                    Bật
-                  </Button>
-                  <Button
-                    size="small"
-                    variant={!light ? 'contained' : 'outlined'}
-                    color="inherit"
-                    disabled={busyCtrl === 'light'}
-                    onClick={() => control('light', false)}
-                  >
-                    Tắt
-                  </Button>
-                </Stack>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+              <Box>
+                <Typography variant="h6">Điều khiển thiết bị</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Chọn mức 0–3 (0 = tắt; quạt: 1–3 là tốc độ) → gửi lệnh MQTT tới thiết bị
+                </Typography>
               </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <AcUnitIcon sx={{ color: fan ? '#0284c7' : 'text.disabled' }} />
-                  <Typography>Quạt</Typography>
-                </Stack>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    size="small"
-                    variant={fan ? 'contained' : 'outlined'}
-                    color="info"
-                    disabled={busyCtrl === 'fan'}
-                    onClick={() => control('fan', true)}
-                  >
-                    Bật
-                  </Button>
-                  <Button
-                    size="small"
-                    variant={!fan ? 'contained' : 'outlined'}
-                    color="inherit"
-                    disabled={busyCtrl === 'fan'}
-                    onClick={() => control('fan', false)}
-                  >
-                    Tắt
-                  </Button>
-                </Stack>
-              </Box>
+              <TextField
+                select size="small" label="Phòng" value={room}
+                onChange={(e) => setRoom(e.target.value)} sx={{ minWidth: 120 }}
+              >
+                {rooms.map((r) => (
+                  <MenuItem key={r} value={r}>{r}</MenuItem>
+                ))}
+              </TextField>
             </Stack>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                gap: 2,
+                mt: 2,
+              }}
+            >
+              {ACTUATORS.map((a) => {
+                const Icon = a.icon
+                const sel = levels[a.type]            // user selection (immediate feedback)
+                const live = liveLevel(a.type)        // device-reported state (read-only)
+                const liveText = a.levels.length === 2 ? (live > 0 ? 'Bật' : 'Tắt') : live
+                return (
+                  <Box
+                    key={a.type}
+                    sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}
+                  >
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Icon sx={{ color: sel > 0 ? a.color : 'text.disabled' }} />
+                      <Box>
+                        <Typography>{a.label}</Typography>
+                        {live != null && (
+                          <Typography variant="caption" color="success.main">● thiết bị: {liveText}</Typography>
+                        )}
+                      </Box>
+                    </Stack>
+                    <ToggleButtonGroup
+                      size="small"
+                      exclusive
+                      value={sel}
+                      disabled={busyCtrl === a.type}
+                      onChange={(_, v) => v != null && control(a.type, v)}
+                    >
+                      {a.levels.map((n) => (
+                        <ToggleButton key={n} value={n} sx={{ minWidth: 44 }}>
+                          {levelLabel(a, n)}
+                        </ToggleButton>
+                      ))}
+                    </ToggleButtonGroup>
+                  </Box>
+                )
+              })}
+            </Box>
           </CardContent>
         </Card>
       )}

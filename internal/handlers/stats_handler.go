@@ -19,7 +19,7 @@ func HandleStatsOverview(c *gin.Context) {
 	today := now.Format("2006-01-02")
 
 	var classrooms, students, teachers, sensorsTotal, sensorsActive int64
-	var alertsToday, sessionsToday, presentToday, enrolledToday int64
+	var alertsToday, sessionsToday int64
 
 	db.DB.Model(&models.Classroom{}).Count(&classrooms)
 	db.DB.Model(&models.Student{}).Count(&students)
@@ -28,15 +28,24 @@ func HandleStatsOverview(c *gin.Context) {
 	db.DB.Model(&models.Sensor{}).Where("status = ?", "Active").Count(&sensorsActive)
 	db.DB.Model(&models.Notification{}).Where("title = ? AND created_at >= ?", "alert", startOfDay).Count(&alertsToday)
 	db.DB.Model(&models.Class{}).Where("day_of_week = ?", weekday).Count(&sessionsToday)
-	db.DB.Model(&models.Attendance{}).Where("date = ? AND attendance_status = ?", today, "present").Count(&presentToday)
-	db.DB.Table("class_students").
-		Joins("JOIN classes ON classes.class_id = class_students.class_id").
-		Where("classes.day_of_week = ?", weekday).
-		Count(&enrolledToday)
 
+	// Attendance via the SHARED daily roll-up (student-level) so the dashboard
+	// always agrees with the reports page. "Có mặt"=present, "Đi muộn"=late,
+	// "Có phép"=excused, "Tỉ lệ tham gia"=(present+late)/(enrolled-excused).
+	var allIDs []uint
+	db.DB.Model(&models.Classroom{}).Pluck("classroom_id", &allIDs)
+	roll := dailyRollup(allIDs, today, weekday)
+	present, late, excused, absent, enrolled := 0, 0, 0, 0, 0
+	for _, rd := range roll {
+		present += rd.Present
+		late += rd.Late
+		excused += rd.Excused
+		absent += rd.Absent
+		enrolled += rd.Enrolled
+	}
 	rate := 0.0
-	if enrolledToday > 0 {
-		rate = float64(presentToday) / float64(enrolledToday)
+	if d := enrolled - excused; d > 0 {
+		rate = float64(present+late) / float64(d)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -48,8 +57,12 @@ func HandleStatsOverview(c *gin.Context) {
 		"alerts_today":   alertsToday,
 		"sessions_today": sessionsToday,
 		"attendance": gin.H{
-			"present_today":  presentToday,
-			"enrolled_today": enrolledToday,
+			"present_today":  present,
+			"late_today":     late,
+			"excused_today":  excused,
+			"attended_today": present + late,
+			"absent_today":   absent,
+			"enrolled_today": enrolled,
 			"rate":           rate,
 		},
 	})

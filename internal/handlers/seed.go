@@ -52,6 +52,15 @@ var (
 	middles  = []string{"Văn", "Thị", "Hữu", "Đức", "Minh", "Thanh", "Quang", "Ngọc", "Gia", "Anh", "Bảo", "Hoài", "Khánh", "Tuấn"}
 	givens   = []string{"An", "Bình", "Cường", "Dũng", "Hà", "Hải", "Hùng", "Khoa", "Lan", "Linh", "Mai", "Nam", "Ngân", "Phúc", "Quân", "Sơn", "Trang", "Tuấn", "Vy", "Yến", "Hương", "Đạt", "Long", "Thảo", "Nhi"}
 	subjects = []string{"Lập trình", "Toán rời rạc", "Mạng máy tính", "Cơ sở dữ liệu", "Kiến trúc máy tính", "Hệ điều hành", "Trí tuệ nhân tạo", "IoT ứng dụng"}
+
+	// Standard daily periods (minutes from midnight): period#, start, end.
+	periods = []struct{ Period, Start, End int }{
+		{1, 7*60, 8*60 + 30},       // 07:00–08:30
+		{2, 8*60 + 40, 10*60 + 10}, // 08:40–10:10
+		{3, 10*60 + 20, 11*60 + 50},// 10:20–11:50
+		{4, 13 * 60, 14*60 + 30},   // 13:00–14:30
+		{5, 14*60 + 40, 16*60 + 10},// 14:40–16:10
+	}
 )
 
 func vietName(i int) string {
@@ -112,6 +121,7 @@ func SeedMockData() {
 			ClassroomName: name,
 			Subject:       subjects[i%len(subjects)],
 			BuildingID:    building,
+			Capacity:      80,
 			StartTime:     wideStart,
 			EndTime:       wideEnd,
 		})
@@ -158,26 +168,46 @@ func SeedMockData() {
 		log.Printf("Seed: students: %v", err)
 	}
 
-	// Classes: one per classroom per weekday (wide time window so there is always
-	// an ongoing class), with all 70 classroom students enrolled.
-	enrollments := make([]models.ClassStudent, 0, 5000)
-	for _, cr := range classrooms {
+	// Active semester.
+	db.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&models.Semester{
+		ID: 1, Name: "Học kỳ 2 (2025–2026)", StartDate: "2026-01-05", EndDate: "2026-05-31", IsActive: true, CreatedAt: now,
+	})
+	// Fixed national holidays (attendance not processed on these dates).
+	db.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&[]models.Holiday{
+		{Date: "2026-01-01", Name: "Tết Dương lịch"},
+		{Date: "2026-04-30", Name: "Giải phóng miền Nam"},
+		{Date: "2026-05-01", Name: "Quốc tế Lao động"},
+		{Date: "2026-09-02", Name: "Quốc khánh"},
+	})
+
+	// Classes: real periods (tiết) per classroom per weekday; enroll all 70 students.
+	enrollments := make([]models.ClassStudent, 0, 25000)
+	classCount := 0
+	for ci, cr := range classrooms {
 		for _, wd := range weekdays {
-			class := models.Class{
-				Subject:     cr.Subject,
-				ClassroomID: cr.ClassroomID,
-				DayOfWeek:   wd,
-				StartTime:   wideStart,
-				EndTime:     wideEnd,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			}
-			if err := db.DB.Omit("Classroom", "Students").Create(&class).Error; err != nil {
-				log.Printf("Seed: class: %v", err)
-				continue
-			}
-			for _, sid := range classroomStudents[cr.ClassroomID] {
-				enrollments = append(enrollments, models.ClassStudent{ClassID: class.ClassID, StudentID: sid})
+			for pi, p := range periods {
+				class := models.Class{
+					Subject:     subjects[(pi+ci)%len(subjects)],
+					ClassroomID: cr.ClassroomID,
+					SemesterID:  1,
+					TeacherID:   uint((ci+pi)%12 + 1),
+					Period:      p.Period,
+					DayOfWeek:   wd,
+					StartMin:    p.Start,
+					EndMin:      p.End,
+					StartTime:   wideStart,
+					EndTime:     wideEnd,
+					CreatedAt:   now,
+					UpdatedAt:   now,
+				}
+				if err := db.DB.Omit("Classroom", "Students").Create(&class).Error; err != nil {
+					log.Printf("Seed: class: %v", err)
+					continue
+				}
+				classCount++
+				for _, sid := range classroomStudents[cr.ClassroomID] {
+					enrollments = append(enrollments, models.ClassStudent{ClassID: class.ClassID, StudentID: sid})
+				}
 			}
 		}
 	}
@@ -188,7 +218,7 @@ func SeedMockData() {
 	seedSchedules()
 
 	log.Printf("Seed: mock data done — %d classrooms, %d students, %d classes, %d enrollments",
-		len(classrooms), len(students), len(classrooms)*len(weekdays), len(enrollments))
+		len(classrooms), len(students), classCount, len(enrollments))
 }
 
 // SeedAccountLinks binds the demo teacher/student accounts to a Teacher/Student
@@ -253,6 +283,80 @@ func userByName(name string) *models.User {
 		return nil
 	}
 	return &u
+}
+
+// SeedTodayAttendance creates a believable, student-level attendance snapshot for
+// today's periods: ~80% present (all periods), ~8% late (period 1), ~5% excused
+// (approved leave), ~7% absent. Daily roll-up stays consistent. Idempotent.
+func SeedTodayAttendance() {
+	loc := time.FixedZone("UTC+7", 7*60*60)
+	now := time.Now().In(loc)
+	today := now.Format("2006-01-02")
+	weekday := now.Weekday().String()
+
+	if isHoliday(today) {
+		return
+	}
+	var existing int64
+	db.DB.Model(&models.Attendance{}).Where("date = ?", today).Count(&existing)
+	if existing > 0 {
+		return
+	}
+	var classes []models.Class
+	db.DB.Where("day_of_week = ?", weekday).Order("classroom_id asc, start_min asc").Find(&classes)
+	if len(classes) == 0 {
+		return
+	}
+	byRoom := map[uint][]models.Class{}
+	for _, c := range classes {
+		byRoom[c.ClassroomID] = append(byRoom[c.ClassroomID], c)
+	}
+
+	rng := rand.New(rand.NewSource(int64(now.YearDay()) + 1000))
+	rows := make([]models.Attendance, 0, 8192)
+	leaves := make([]models.LeaveRequest, 0, 256)
+	mkRow := func(s models.Student, cl models.Class, status, tm string) {
+		id := uuid.New().String()
+		cid := cl.ClassID
+		subj := cl.Subject
+		rows = append(rows, models.Attendance{
+			ID: &id, StudentID: s.StudentID, ClassroomID: cl.ClassroomID,
+			ClassID: &cid, Subject: &subj, Date: today,
+			AttendanceStatus: status, DetectionTime: tm, DeviceID: fmt.Sprintf("cam-%d", cl.ClassroomID),
+		})
+	}
+
+	for _, cls := range byRoom {
+		var students []models.Student
+		db.DB.Joins("JOIN class_students cs ON cs.student_id = students.student_id").
+			Where("cs.class_id = ?", cls[0].ClassID).Find(&students)
+		for _, s := range students {
+			r := rng.Float64()
+			switch {
+			case r < 0.80: // present — attend every period
+				for _, cl := range cls {
+					h := cl.StartMin / 60
+					m := cl.StartMin % 60
+					mkRow(s, cl, models.StatusPresent, fmt.Sprintf("%02d:%02d:%02d", h, m+rng.Intn(4), rng.Intn(60)))
+				}
+			case r < 0.88: // late to the first period only
+				mkRow(s, cls[0], models.StatusLate, fmt.Sprintf("%02d:%02d:00", cls[0].StartMin/60, cls[0].StartMin%60+10+rng.Intn(20)))
+			case r < 0.93: // excused — approved leave for the day
+				leaves = append(leaves, models.LeaveRequest{
+					StudentID: s.StudentID, StudentName: s.StudentName, AccountID: s.AccountID,
+					Date: today, Reason: "Nghỉ phép (có đơn)", Status: "approved", ReviewedBy: "system", CreatedAt: now,
+				})
+			default: // absent — no record
+			}
+		}
+	}
+	if len(rows) > 0 {
+		db.DB.CreateInBatches(rows, 500)
+	}
+	if len(leaves) > 0 {
+		db.DB.CreateInBatches(leaves, 200)
+	}
+	log.Printf("Seed: today attendance — %d records, %d approved leaves", len(rows), len(leaves))
 }
 
 // SeedTeacherAssignments links teachers to classrooms (ClassroomTeacher) and

@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"smart_classroom/internal/db"
@@ -11,6 +12,83 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// HandleClassroomsOverview returns a per-classroom snapshot (latest environment
+// readings + today's attendance + safety state), scoped to the caller's role.
+// Powers the "all classrooms" dashboard overview.
+func HandleClassroomsOverview(c *gin.Context) {
+	loc := time.FixedZone("UTC+7", 7*60*60)
+	now := time.Now().In(loc)
+	today := now.Format("2006-01-02")
+	weekday := now.Weekday().String()
+
+	ids, _ := scopedClassroomIDs(c)
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, []gin.H{})
+		return
+	}
+
+	var classrooms []models.Classroom
+	db.DB.Where("classroom_id IN ?", ids).Order("classroom_id asc").Find(&classrooms)
+
+	buildings := map[uint]string{}
+	var bs []models.Building
+	db.DB.Find(&bs)
+	for _, b := range bs {
+		buildings[b.BuildingID] = b.BuildingName
+	}
+
+	// Today's attendance per classroom (reuses the report helper).
+	att := map[uint]classroomReport{}
+	rows, _, _, _, _ := computeByClassroom(ids, today, weekday)
+	for _, r := range rows {
+		att[r.ClassroomID] = r
+	}
+
+	// Latest reading per device in the last 30 minutes.
+	type lr struct {
+		DeviceID   string
+		DeviceType string
+		Value      float64
+	}
+	var lrs []lr
+	db.DB.Raw(`SELECT DISTINCT ON (device_id) device_id, device_type, value
+	           FROM sen_sor_data WHERE timestamp > ? ORDER BY device_id, timestamp DESC`,
+		now.Add(-30*time.Minute)).Scan(&lrs)
+
+	smokeThr := threshold("SMOKE_THRESHOLD", 300)
+	tempThr := threshold("TEMP_THRESHOLD", 50)
+
+	out := make([]gin.H, 0, len(classrooms))
+	for _, cr := range classrooms {
+		prefix := cr.ClassroomName + "-"
+		sensors := map[string]float64{}
+		for _, x := range lrs {
+			if strings.HasPrefix(x.DeviceID, prefix) {
+				sensors[x.DeviceType] = x.Value
+			}
+		}
+		a := att[cr.ClassroomID]
+		danger := sensors["smoke"] >= smokeThr || sensors["temperature"] >= tempThr
+		out = append(out, gin.H{
+			"classroom_id":   cr.ClassroomID,
+			"classroom_name": cr.ClassroomName,
+			"building":        buildings[cr.BuildingID],
+			"sensors": gin.H{
+				"light":       sensors["light"],
+				"temperature": sensors["temperature"],
+				"humidity":    sensors["humidity"],
+				"smoke":       sensors["smoke"],
+			},
+			"attendance": gin.H{
+				"present": a.Present, "late": a.Late, "excused": a.Excused, "absent": a.Absent,
+				"enrolled": a.Enrolled, "rate": a.Rate,
+			},
+			"danger": danger,
+		})
+	}
+	c.JSON(http.StatusOK, out)
+}
 
 // scopedClassroomIDs returns the classroom IDs the caller may see.
 // admin → all classrooms (isAll=true); teacher → only assigned classrooms; others → none.
@@ -98,6 +176,7 @@ type classroomReport struct {
 	Subject       string  `json:"subject"`
 	Present       int     `json:"present"`
 	Late          int     `json:"late"`
+	Excused       int     `json:"excused"`
 	Enrolled      int     `json:"enrolled"`
 	Absent        int     `json:"absent"`
 	Rate          float64 `json:"rate"`
@@ -108,79 +187,28 @@ type datePoint struct {
 	Present int    `json:"present"`
 }
 
-// computeByClassroom builds the per-classroom present/late/absent breakdown for
-// a given date across the given classroom IDs. Returns rows + totals.
-func computeByClassroom(ids []uint, dateStr, weekday string) (rows []classroomReport, totPresent, totLate, totEnrolled int) {
+// computeByClassroom builds the per-classroom daily breakdown using the shared
+// student-level roll-up, so dashboard / reports / overview always agree.
+func computeByClassroom(ids []uint, dateStr, weekday string) (rows []classroomReport, totPresent, totLate, totExcused, totEnrolled int) {
+	roll := dailyRollup(ids, dateStr, weekday)
 	var classrooms []models.Classroom
 	db.DB.Where("classroom_id IN ?", ids).Order("classroom_id asc").Find(&classrooms)
-
-	var classes []models.Class
-	db.DB.Where("classroom_id IN ? AND day_of_week = ?", ids, weekday).Find(&classes)
-	classroomToClass := map[uint]uint{}
-	classIDs := []uint{}
-	for _, cl := range classes {
-		if _, ok := classroomToClass[cl.ClassroomID]; !ok {
-			classroomToClass[cl.ClassroomID] = cl.ClassID
-			classIDs = append(classIDs, cl.ClassID)
-		}
-	}
-
-	type cnt struct {
-		ClassID uint
-		C       int
-	}
-	enrolledMap, presentMap, lateMap := map[uint]int{}, map[uint]int{}, map[uint]int{}
-	if len(classIDs) > 0 {
-		var er []cnt
-		db.DB.Table("class_students").Select("class_id, count(*) as c").
-			Where("class_id IN ?", classIDs).Group("class_id").Scan(&er)
-		for _, r := range er {
-			enrolledMap[r.ClassID] = r.C
-		}
-		var sr []struct {
-			ClassID uint
-			Status  string
-			C       int
-		}
-		db.DB.Table("attendances").Select("class_id, attendance_status as status, count(distinct student_id) as c").
-			Where("class_id IN ? AND date = ?", classIDs, dateStr).
-			Group("class_id, attendance_status").Scan(&sr)
-		for _, r := range sr {
-			if r.Status == "present" {
-				presentMap[r.ClassID] = r.C
-			} else if r.Status == "late" {
-				lateMap[r.ClassID] = r.C
-			}
-		}
-	}
-
 	rows = make([]classroomReport, 0, len(classrooms))
 	for _, cr := range classrooms {
-		classID := classroomToClass[cr.ClassroomID]
-		enrolled := enrolledMap[classID]
-		present := presentMap[classID]
-		late := lateMap[classID]
-		if present+late > enrolled {
-			late = enrolled - present
-			if late < 0 {
-				late = 0
-				present = enrolled
-			}
-		}
-		absent := enrolled - present - late
-		rate := 0.0
-		if enrolled > 0 {
-			rate = float64(present+late) / float64(enrolled)
+		rd := roll[cr.ClassroomID]
+		if rd == nil {
+			rd = &RoomDaily{}
 		}
 		rows = append(rows, classroomReport{
 			ClassroomID: cr.ClassroomID, ClassroomName: cr.ClassroomName, Subject: cr.Subject,
-			Present: present, Late: late, Enrolled: enrolled, Absent: absent, Rate: rate,
+			Present: rd.Present, Late: rd.Late, Excused: rd.Excused, Enrolled: rd.Enrolled, Absent: rd.Absent, Rate: rd.Rate,
 		})
-		totPresent += present
-		totLate += late
-		totEnrolled += enrolled
+		totPresent += rd.Present
+		totLate += rd.Late
+		totExcused += rd.Excused
+		totEnrolled += rd.Enrolled
 	}
-	return rows, totPresent, totLate, totEnrolled
+	return rows, totPresent, totLate, totExcused, totEnrolled
 }
 
 // HandleAttendanceReport returns attendance analytics for a date (per-classroom
@@ -221,18 +249,18 @@ func HandleAttendanceReport(c *gin.Context) {
 		from = now.AddDate(0, 0, -6).Format("2006-01-02")
 	}
 
-	byClassroom, totPresent, totLate, totEnrolled := computeByClassroom(ids, dateStr, weekday)
+	byClassroom, totPresent, totLate, totExcused, totEnrolled := computeByClassroom(ids, dateStr, weekday)
 
-	// Daily trend (present + late) across the scope.
+	// Daily trend: distinct students who attended (present/late) per date.
 	var trend []datePoint
-	db.DB.Table("attendances").Select("date, count(*) as present").
+	db.DB.Table("attendances").Select("date, count(distinct student_id) as present").
 		Where("classroom_id IN ? AND attendance_status IN ? AND date BETWEEN ? AND ?", ids, []string{"present", "late"}, from, to).
 		Group("date").Order("date asc").Scan(&trend)
 
-	totalAbsent := totEnrolled - totPresent - totLate
+	totalAbsent := totEnrolled - totPresent - totLate - totExcused
 	totalRate := 0.0
-	if totEnrolled > 0 {
-		totalRate = float64(totPresent+totLate) / float64(totEnrolled)
+	if d := totEnrolled - totExcused; d > 0 {
+		totalRate = float64(totPresent+totLate) / float64(d)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -241,7 +269,7 @@ func HandleAttendanceReport(c *gin.Context) {
 		"date":   dateStr,
 		"from":   from,
 		"to":     to,
-		"totals": gin.H{"present": totPresent, "late": totLate, "enrolled": totEnrolled, "absent": totalAbsent, "rate": totalRate},
+		"totals": gin.H{"present": totPresent, "late": totLate, "excused": totExcused, "enrolled": totEnrolled, "absent": totalAbsent, "rate": totalRate},
 		"by_classroom": byClassroom,
 		"by_date":      trend,
 	})
@@ -261,16 +289,16 @@ func HandleAttendanceReportExport(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date"})
 		return
 	}
-	rows, _, _, _ := computeByClassroom(ids, dateStr, dt.Weekday().String())
+	rows, _, _, _, _ := computeByClassroom(ids, dateStr, dt.Weekday().String())
 
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename=attendance_"+dateStr+".csv")
 	w := csv.NewWriter(c.Writer)
-	_ = w.Write([]string{"Ngay", "Phong", "Mon", "Si so", "Co mat", "Di muon", "Vang", "Ti le (%)"})
+	_ = w.Write([]string{"Ngay", "Phong", "Mon", "Si so", "Co mat", "Di muon", "Co phep", "Vang", "Ti le (%)"})
 	for _, r := range rows {
 		_ = w.Write([]string{
 			dateStr, r.ClassroomName, r.Subject,
-			strconv.Itoa(r.Enrolled), strconv.Itoa(r.Present), strconv.Itoa(r.Late), strconv.Itoa(r.Absent),
+			strconv.Itoa(r.Enrolled), strconv.Itoa(r.Present), strconv.Itoa(r.Late), strconv.Itoa(r.Excused), strconv.Itoa(r.Absent),
 			strconv.Itoa(int(r.Rate * 100)),
 		})
 	}

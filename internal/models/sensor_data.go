@@ -28,6 +28,17 @@ type Device struct {
 	Status     string `json:"status"`
 }
 
+// DeviceCredential authenticates an edge device (ESP32 / Jetson camera).
+// Kind: "sensor" | "camera". Token is the per-device secret sent in X-Device-Key.
+type DeviceCredential struct {
+	DeviceID    string    `gorm:"primaryKey" json:"device_id"`
+	Token       string    `gorm:"index" json:"token"`
+	Kind        string    `json:"kind"`
+	ClassroomID uint      `json:"classroom_id"`
+	Active      bool      `json:"active"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
 type Electricity struct {
 	DeviceID   string    `gorm:"primaryKey" json:"device_id"` // Associated device ID
 	DeviceName string    `json:"device_name"`                 // Name of the device

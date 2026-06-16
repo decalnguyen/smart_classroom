@@ -77,9 +77,53 @@ func InitDB() {
 		&models.Electricity{},
 		&models.Class{},
 		&models.ClassStudent{},
+		&models.Semester{},
+		&models.Holiday{},
+		&models.MakeupSession{},
+		&models.LeaveRequest{},
+		&models.AuditLog{},
+		&models.DeviceCredential{},
+		&models.FaceReview{},
 	}
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {
 		log.Fatal("Failed to migrate database models:", err)
 	}
+	runMigrations()
 	log.Println("Database connection initialized and migrated successfully")
+}
+
+// runMigrations applies explicit, idempotent SQL that GORM AutoMigrate can't do:
+// the pgvector extension (face embeddings) and a unique constraint that makes
+// attendance idempotent at the DB layer (one row per student/class/date).
+// NOTE: production should adopt a versioned migration tool (golang-migrate);
+// this is the minimal explicit-SQL bootstrap.
+func runMigrations() {
+	stmts := []string{
+		`CREATE EXTENSION IF NOT EXISTS vector`,
+		// Migrate any old single-row-per-student gallery (PK student_id, no id column)
+		// to the multi-embedding shape. Only drops when empty (gallery is rebuildable
+		// from training data), so it is non-destructive for real data.
+		`DO $$
+		 BEGIN
+		   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='face_embeddings')
+		      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='face_embeddings' AND column_name='student_id')
+		      AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='face_embeddings' AND column_name='id')
+		      AND (SELECT count(*) FROM face_embeddings) = 0 THEN
+		     DROP TABLE face_embeddings;
+		   END IF;
+		 END $$`,
+		// Face embeddings store (ArcFace 512-d). MULTIPLE reference vectors per
+		// student (original + augmented), mirroring the trained FAISS gallery, so
+		// recognition can do a kNN weighted vote like the training pipeline.
+		`CREATE TABLE IF NOT EXISTS face_embeddings (id bigserial PRIMARY KEY, student_id bigint NOT NULL, mssv text, student_name text, source text, embedding vector(512), created_at timestamptz DEFAULT now())`,
+		`CREATE INDEX IF NOT EXISTS idx_face_emb_student ON face_embeddings (student_id)`,
+		// Idempotent attendance: one row per student/class/date.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_student_class_date ON attendances (student_id, class_id, date)`,
+		`CREATE INDEX IF NOT EXISTS idx_sensordata_ts ON sen_sor_data (timestamp)`,
+	}
+	for _, s := range stmts {
+		if err := DB.Exec(s).Error; err != nil {
+			log.Printf("Migration warning [%.40s...]: %v", s, err)
+		}
+	}
 }

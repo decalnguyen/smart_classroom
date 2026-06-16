@@ -38,6 +38,7 @@ export const authApi = {
 // ---- Dashboard stats ----
 export const statsApi = {
   overview: () => client.get('/stats/overview'),
+  classroomsOverview: () => client.get('/classrooms/overview'),
 }
 
 // ---- Attendance reports / analytics ----
@@ -59,6 +60,43 @@ export const reportApi = {
 // ---- Personal (student) ----
 export const meApi = {
   attendance: (params) => client.get('/my/attendance', { params }),
+}
+
+// ---- Leave requests ----
+export const leaveApi = {
+  list: (params) => client.get('/leaves', { params }),
+  create: (payload) => client.post('/leaves', payload), // {date, reason, student_id?}
+  review: (id, status) => client.put(`/leaves/${id}/review`, { status }),
+}
+
+// ---- Audit log (admin) ----
+export const auditApi = {
+  list: (params) => client.get('/audit', { params }),
+}
+
+// ---- Holidays (admin) ----
+export const holidayApi = {
+  list: () => client.get('/holidays'),
+  create: (date, name) => client.post('/holidays', { date, name }),
+  remove: (id) => client.delete(`/holidays/${id}`),
+}
+
+// ---- Face-recognition review queue (staff) ----
+export const reviewApi = {
+  list: (status) => client.get('/review-queue', { params: status ? { status } : {} }),
+  decide: (id, decision) => client.post(`/review-queue/${id}`, { decision }), // confirm | reject
+}
+
+// ---- Face enrollment (đăng ký khuôn mặt) ----
+export const enrollmentApi = {
+  status: (params) => client.get('/enrollment/status', { params }), // {classroom_id?, q?, only?}
+  enrollPhoto: (studentId, blob) => {
+    const fd = new FormData()
+    fd.append('student_id', studentId)
+    fd.append('image', blob, 'face.jpg')
+    return client.post('/enrollment/face/photo', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  remove: (studentId) => client.delete(`/enrollment/face/${studentId}`),
 }
 
 // ---- Teacher ↔ classroom assignment (admin) ----

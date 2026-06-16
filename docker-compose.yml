@@ -27,11 +27,18 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-test123}
       DB_NAME: ${POSTGRES_DB:-sensordata}
       DB_PORT: "5432"
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASS:-admin}@rabbitmq:5672/
       JWT_SECRET: ${JWT_SECRET:-dev_insecure_secret_change_me}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-dev-device-key}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
       TEMP_THRESHOLD: ${TEMP_THRESHOLD:-50}
+      # Recognition thresholds (match the trained model in NhanDangMSSV/).
+      FACE_T_HIGH: ${FACE_T_HIGH:-0.60}
+      FACE_T_LOW: ${FACE_T_LOW:-0.45}
+      FACE_KNN: ${FACE_KNN:-5}
+      # Optional face-enroll service (only reachable when the 'enroll' profile is up).
+      FACE_ENROLL_URL: ${FACE_ENROLL_URL:-http://face-enroll:9000}
     ports:
       # Host 8091 -> container 8081 (8081 is taken by another app on this host).
       - ${BACKEND_HOST_PORT:-8091}:8081
@@ -48,7 +55,7 @@ services:
       context: .
       dockerfile: server/ws/Dockerfile
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASS:-admin}@rabbitmq:5672/
     ports:
       - 8082:8082
     depends_on:
@@ -64,13 +71,42 @@ services:
       context: .
       dockerfile: server/simulator/Dockerfile
     environment:
+      # Sensor transport: mqtt (publish like a real ESP32) or http (POST /sensor).
+      SENSOR_TRANSPORT: ${SIM_TRANSPORT:-mqtt}
+      MQTT_BROKER: tcp://rabbitmq:1883
+      MQTT_USER: ${MQTT_USER:-admin}
+      MQTT_PASS: ${MQTT_PASS:-admin}
       API_URL: http://backend:8081/sensor
       ROOM_ID: ${ROOM_ID:-A101}
       INTERVAL_SECONDS: ${SIM_INTERVAL:-5}
-      SPIKE_EVERY: ${SIM_SPIKE_EVERY:-12}
+      # Smoke auto-spike disabled by default (avoids noisy/unrealistic alerts).
+      SPIKE_EVERY: ${SIM_SPIKE_EVERY:-0}
       SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
+      # Slower face-scan cadence so attendance fills realistically (not 100%).
+      SCAN_EVERY_SECONDS: ${SIM_SCAN_EVERY:-20}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-dev-device-key}
     depends_on:
       - backend
+      - rabbitmq
+    networks:
+      - smart_classroom
+
+  # Optional enrollment helper (InsightFace buffalo_l on CPU). Not started by
+  # default — bring it up only when you want web/photo enrollment:
+  #   docker compose --profile enroll up -d face-enroll
+  face-enroll:
+    profiles: ["enroll"]
+    restart: always
+    container_name: face-enroll
+    build:
+      context: .
+      dockerfile: server/face-enroll/Dockerfile
+    environment:
+      AUG_PER_IMG: ${AUG_PER_IMG:-8}
+      ORT_PROVIDERS: CPUExecutionProvider
+    volumes:
+      # Cache the downloaded buffalo_l model across restarts.
+      - insightface_models:/root/.insightface
     networks:
       - smart_classroom
 
@@ -99,9 +135,14 @@ services:
     restart: always
     container_name: rabbitmq
     image: rabbitmq:3-management
+    environment:
+      # Broker user for both AMQP (backend/ws) and MQTT (ESP32 devices).
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-admin}
     ports:
       - 5672:5672
       - 15672:15672
+      - 1883:1883   # MQTT (edge devices)
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -111,6 +152,8 @@ services:
       - smart_classroom
     volumes:
       - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ./enabled_plugins:/etc/rabbitmq/enabled_plugins
 
 volumes:
   progresDB_data:
+  insightface_models:

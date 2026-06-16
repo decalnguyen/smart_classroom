@@ -29,6 +29,7 @@ import GroupsIcon from '@mui/icons-material/Groups'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CancelIcon from '@mui/icons-material/Cancel'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
+import EventBusyIcon from '@mui/icons-material/EventBusy'
 import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural'
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
 import HowToRegIcon from '@mui/icons-material/HowToReg'
@@ -118,7 +119,8 @@ export default function Attendance() {
     setNoClass(false)
     try {
       const { data } = await attendanceApi.list(id)
-      setRows(Array.isArray(data) ? data : [])
+      const list = data && Array.isArray(data.students) ? data.students : Array.isArray(data) ? data : []
+      setRows(list)
     } catch (err) {
       if (err?.response?.status === 404) {
         setRows([])
@@ -146,7 +148,8 @@ export default function Attendance() {
     const total = rows.length
     const present = rows.filter((r) => r.status === 'present').length
     const late = rows.filter((r) => r.status === 'late').length
-    return { total, present, late, absent: total - present - late }
+    const excused = rows.filter((r) => r.status === 'excused').length
+    return { total, present, late, excused, absent: total - present - late - excused }
   }, [rows])
 
   const handleSubmit = async () => {
@@ -200,10 +203,11 @@ export default function Attendance() {
       />
 
       {/* KPI summary */}
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, mb: 3 }}>
-        <StatCard icon={<GroupsIcon />} value={summary.total} label="Tổng số" color="#2563eb" />
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5, 1fr)' }, mb: 3 }}>
+        <StatCard icon={<GroupsIcon />} value={summary.total} label="Sĩ số" color="#2563eb" />
         <StatCard icon={<CheckCircleIcon />} value={summary.present} label="Có mặt" color="#16a34a" />
         <StatCard icon={<AccessTimeIcon />} value={summary.late} label="Đi muộn" color="#ea580c" />
+        <StatCard icon={<EventBusyIcon />} value={summary.excused} label="Có phép" color="#0891b2" />
         <StatCard icon={<CancelIcon />} value={summary.absent} label="Vắng" color="#dc2626" />
       </Box>
 
@@ -287,6 +291,7 @@ export default function Attendance() {
                 >
                   <MenuItem value="present">Có mặt</MenuItem>
                   <MenuItem value="late">Đi muộn</MenuItem>
+                  <MenuItem value="excused">Có phép</MenuItem>
                   <MenuItem value="absent">Vắng</MenuItem>
                 </Select>
               </FormControl>
@@ -355,6 +360,8 @@ export default function Attendance() {
                           <Chip size="small" color="success" label="Có mặt" />
                         ) : r.status === 'late' ? (
                           <Chip size="small" color="warning" label="Đi muộn" />
+                        ) : r.status === 'excused' ? (
+                          <Chip size="small" color="info" label="Có phép" />
                         ) : (
                           <Chip size="small" color="error" label="Vắng" />
                         )}

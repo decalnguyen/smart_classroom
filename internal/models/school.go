@@ -13,6 +13,7 @@ type Classroom struct {
 	ClassroomName string    `json:"classroom_name"`
 	Subject       string    `json:"subject"`
 	BuildingID    uint      `json:"building_id"`
+	Capacity      int       `json:"capacity"` // max students (sức chứa)
 	StartTime     time.Time `json:"start_time"`
 	EndTime       time.Time `json:"end_time"`
 	Classes       []Class   `gorm:"foreignKey:ClassroomID"`
@@ -21,7 +22,12 @@ type Class struct {
 	ClassID     uint      `gorm:"primaryKey" json:"class_id"`
 	Subject     string    `json:"subject"`
 	ClassroomID uint      `json:"classroom_id"`
+	SemesterID  uint      `json:"semester_id"`
+	TeacherID   uint      `json:"teacher_id"` // teacher of this period
+	Period      int       `json:"period"`     // 1..N period of the day
 	DayOfWeek   string    `json:"day_of_week"`
+	StartMin    int       `json:"start_min"` // minutes from midnight (real period time)
+	EndMin      int       `json:"end_min"`
 	StartTime   time.Time `json:"start_time"`
 	EndTime     time.Time `json:"end_time"`
 	CreatedAt   time.Time `json:"created_at"`

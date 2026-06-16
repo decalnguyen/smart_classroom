@@ -103,16 +103,12 @@ func EvaluateAndAlert(data models.SenSorData) {
 	triggerBuzzer(data.DeviceID, message)
 }
 
-// triggerBuzzer issues an alarm command. The physical ESP32 buzzer is driven by
-// the device firmware; here we publish a command event (consumed by the device
-// command channel) and log it. Best-effort by design.
+// triggerBuzzer issues the alarm command to the room's ESP32 buzzer via the MQTT
+// command channel (/{room}/buzzer/cmd). The device subscribes and actuates.
+// (Hardware fail-safe note: a life-safety buzzer should ALSO have a local trip
+// on the ESP32 if the smoke pin crosses threshold, independent of the network —
+// see docs/ARCHITECTURE.md.)
 func triggerBuzzer(deviceID, reason string) {
-	cmd := map[string]interface{}{
-		"type":      "buzzer",
-		"device_id": deviceID,
-		"action":    "on",
-		"reason":    reason,
-	}
-	rabbitmq.Publish("command.buzzer", cmd)
-	log.Printf("🚨 ALARM: buzzer command issued for %s (%s)", deviceID, reason)
+	PublishDeviceCommand(roomOf(deviceID), "buzzer", "on", 1, reason)
+	log.Printf("🚨 ALARM: buzzer command -> /%s/buzzer/cmd (%s)", roomOf(deviceID), reason)
 }

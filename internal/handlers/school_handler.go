@@ -5,9 +5,7 @@ import (
 	"net/http"
 	"smart_classroom/internal/db"
 	"smart_classroom/internal/models"
-	"smart_classroom/internal/rabbitmq"
 	"strconv"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -48,6 +46,7 @@ func HandlePostBuilding(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create building"})
 		return
 	}
+	writeAudit(c, "create", "building", uintStr(building.BuildingID), building.BuildingName)
 	c.JSON(http.StatusOK, gin.H{"message": "Building created"})
 }
 
@@ -67,6 +66,7 @@ func HandlePutBuilding(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update building"})
 		return
 	}
+	writeAudit(c, "update", "building", id, building.BuildingName)
 	c.JSON(http.StatusOK, gin.H{"message": "Building updated"})
 }
 
@@ -76,6 +76,7 @@ func HandleDeleteBuilding(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete building"})
 		return
 	}
+	writeAudit(c, "delete", "building", id, "")
 	c.JSON(http.StatusOK, gin.H{"message": "Building deleted"})
 }
 
@@ -101,6 +102,7 @@ func HandlePostClassroom(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create classroom"})
 		return
 	}
+	writeAudit(c, "create", "classroom", uintStr(classroom.ClassroomID), classroom.ClassroomName)
 	c.JSON(http.StatusOK, gin.H{"message": "Classroom created"})
 }
 
@@ -120,6 +122,7 @@ func HandlePutClassroom(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update classroom"})
 		return
 	}
+	writeAudit(c, "update", "classroom", id, classroom.ClassroomName)
 	c.JSON(http.StatusOK, gin.H{"message": "Classroom updated"})
 }
 
@@ -129,19 +132,16 @@ func HandleDeleteClassroom(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete classroom"})
 		return
 	}
+	writeAudit(c, "delete", "classroom", id, "")
 	c.JSON(http.StatusOK, gin.H{"message": "Classroom deleted"})
 }
 func HandleGetClass(c *gin.Context) {
-	var class models.Class
-	now := time.Now()
-	weekday := now.Weekday().String()
-	classroomID := c.Param("id")
-	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-		classroomID, weekday, now, now).First(&class).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No ongoing class found"})
+	cl, ok := findOngoingClass(parseUintParam(c.Param("id")))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không có tiết học đang diễn ra"})
 		return
 	}
-	c.JSON(http.StatusOK, class)
+	c.JSON(http.StatusOK, cl)
 }
 func HandlePostClass(c *gin.Context) {
 	var class models.Class
@@ -149,10 +149,11 @@ func HandlePostClass(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	if err := db.DB.Where("class_id = ?", class.ClassID).First(&models.Class{}).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Class already exists"})
+	if msg := classConflict(class.ClassroomID, class.TeacherID, class.DayOfWeek, class.StartMin, class.EndMin, 0); msg != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": msg})
 		return
-	} else if err := db.DB.Create(&class).Error; err != nil {
+	}
+	if err := db.DB.Omit("Classroom", "Students").Create(&class).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create class"})
 		return
 	}
@@ -170,7 +171,11 @@ func HandlePutClass(c *gin.Context) {
 		return
 	}
 	class.ClassID = parseUintParam(id) // prevent PK change via body
-	if err := db.DB.Save(&class).Error; err != nil {
+	if msg := classConflict(class.ClassroomID, class.TeacherID, class.DayOfWeek, class.StartMin, class.EndMin, class.ClassID); msg != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": msg})
+		return
+	}
+	if err := db.DB.Omit("Classroom", "Students").Save(&class).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update class"})
 		return
 	}
@@ -232,6 +237,7 @@ func HandlePostStudent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create student"})
 		return
 	}
+	writeAudit(c, "create", "student", uintStr(student.StudentID), student.MSSV+" "+student.StudentName)
 	c.JSON(http.StatusOK, gin.H{"message": "Student created"})
 }
 
@@ -251,6 +257,7 @@ func HandlePutStudent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update student"})
 		return
 	}
+	writeAudit(c, "update", "student", id, student.MSSV+" "+student.StudentName)
 	c.JSON(http.StatusOK, gin.H{"message": "Student updated"})
 }
 
@@ -260,6 +267,7 @@ func HandleDeleteStudent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete student"})
 		return
 	}
+	writeAudit(c, "delete", "student", id, "")
 	c.JSON(http.StatusOK, gin.H{"message": "Student deleted"})
 }
 func HandleGetTeachers(c *gin.Context) {
@@ -284,6 +292,7 @@ func HandlePostTeacher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create teacher"})
 		return
 	}
+	writeAudit(c, "create", "teacher", uintStr(teacher.TeacherID), teacher.TeacherName)
 	c.JSON(http.StatusOK, gin.H{"message": "Teacher created"})
 }
 
@@ -303,6 +312,7 @@ func HandlePutTeacher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update teacher"})
 		return
 	}
+	writeAudit(c, "update", "teacher", id, teacher.TeacherName)
 	c.JSON(http.StatusOK, gin.H{"message": "Teacher updated"})
 }
 
@@ -312,6 +322,7 @@ func HandleDeleteTeacher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete teacher"})
 		return
 	}
+	writeAudit(c, "delete", "teacher", id, "")
 	c.JSON(http.StatusOK, gin.H{"message": "Teacher deleted"})
 }
 func HandleGetSchedules(c *gin.Context) {
@@ -345,10 +356,10 @@ func HandleGetSchedules(c *gin.Context) {
 					continue
 				}
 				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
-					"time":  periodTime(cl.ClassID),
+					"time":  fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
 					"title": cl.Subject,
 					"room":  rooms[cl.ClassroomID],
-					"desc":  "Lớp được phân công",
+					"desc":  fmt.Sprintf("Tiết %d", cl.Period),
 				})
 			}
 		}
@@ -449,70 +460,66 @@ func HandleGetAttendance(c *gin.Context) {
 		}
 	}
 
-	loc := time.FixedZone("UTC+7", 7*60*60) // or "Asia/Bangkok", etc.
-	now := time.Now().In(loc)
-	weekday := now.Weekday().String()
-	// Find the class that is currently ongoing in the specified classroom.
-	// NOTE: Pluck requires the model/table to be set explicitly.
-	var classID uint
-	db.DB.Model(&models.Class{}).
-		Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-			classroomID, weekday, now, now).
-		Limit(1).Pluck("class_id", &classID)
-	if classID == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No ongoing class in this classroom"})
+	// Current ongoing period for this classroom (respects holidays/makeups).
+	class, ok := findOngoingClass(parseUintParam(classroomID))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không có tiết học đang diễn ra trong phòng này"})
 		return
 	}
-	// Get the list of students enrolled in the class
+	today := nowVN().Format("2006-01-02")
+
 	var enrolledStudents []models.Student
 	if err := db.DB.
 		Joins("JOIN class_students ON students.student_id = class_students.student_id").
-		Where("class_students.class_id = ?", classID).
+		Where("class_students.class_id = ?", class.ClassID).
 		Find(&enrolledStudents).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get enrolled students"})
 		return
 	}
-	// Map each student's attendance status today (present / late). Present wins
-	// over late if both exist.
+
+	// Status of each enrolled student in THIS period today (present/late).
 	type attRow struct {
 		StudentID        uint
 		AttendanceStatus string
 	}
 	var attRows []attRow
-	db.DB.Model(&models.Attendance{}).
-		Select("student_id, attendance_status").
-		Where("class_id = ? AND date = ?", classID, now.Format("2006-01-02")).
-		Scan(&attRows)
+	db.DB.Model(&models.Attendance{}).Select("student_id, attendance_status").
+		Where("class_id = ? AND date = ?", class.ClassID, today).Scan(&attRows)
 	statusMap := map[uint]string{}
 	for _, r := range attRows {
-		if statusMap[r.StudentID] == "present" {
+		if statusMap[r.StudentID] == models.StatusPresent {
 			continue
 		}
 		statusMap[r.StudentID] = r.AttendanceStatus
 	}
+	// Approved leave today -> excused.
+	var leaveIDs []uint
+	db.DB.Model(&models.LeaveRequest{}).Where("date = ? AND status = ?", today, "approved").Pluck("student_id", &leaveIDs)
+	excused := map[uint]bool{}
+	for _, id := range leaveIDs {
+		excused[id] = true
+	}
 
-	// Privacy: only staff see contact details; students do not see peers' phone/email.
-	includeContact := c.GetString("role") != "student"
+	includeContact := c.GetString("role") != "student" // privacy
 
 	results := []gin.H{}
 	for _, student := range enrolledStudents {
 		status := statusMap[student.StudentID]
 		if status == "" {
-			status = "absent"
+			if excused[student.StudentID] {
+				status = models.StatusExcused
+			} else {
+				status = models.StatusAbsent
+			}
 		}
-		row := gin.H{
-			"student_id":   student.StudentID,
-			"mssv":         student.MSSV,
-			"student_name": student.StudentName,
-			"status":       status,
-		}
+		row := gin.H{"student_id": student.StudentID, "mssv": student.MSSV, "student_name": student.StudentName, "status": status}
 		if includeContact {
 			row["phone"] = student.Phone
 			row["email"] = student.Email
 		}
 		results = append(results, row)
 	}
-	c.JSON(http.StatusOK, results)
+	c.JSON(http.StatusOK, gin.H{"class": gin.H{"period": class.Period, "subject": class.Subject}, "students": results})
 }
 func HandlePostAttendance(c *gin.Context) {
 	var attendance models.Attendance
@@ -522,15 +529,9 @@ func HandlePostAttendance(c *gin.Context) {
 		return
 	}
 
-	loc := time.FixedZone("UTC+7", 7*60*60) // Vietnam Time
-	nowVN := time.Now().In(loc)             // Vietnam time
-	nowUTC := nowVN.UTC()
-	weekday := nowVN.Weekday().String()
-
-	var class models.Class
-	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-		attendance.ClassroomID, weekday, nowUTC, nowUTC).First(&class).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Class not found"})
+	class, ok := findOngoingClass(attendance.ClassroomID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không có tiết học đang diễn ra trong phòng này"})
 		return
 	}
 	var student models.Student
@@ -538,39 +539,46 @@ func HandlePostAttendance(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Student not found"})
 		return
 	}
-	id_new := uuid.New().String()
-	attendance = models.Attendance{
-		ID:        &id_new,
-		StudentID: attendance.StudentID,
-		Student:   &student,
-
-		ClassroomID:      attendance.ClassroomID,
-		ClassID:          &class.ClassID,
-		Class:            &class,
-		Subject:          &class.Subject,
-		Date:             nowUTC.Format("2006-01-02"),
-		AttendanceStatus: attendance.AttendanceStatus,
-		DetectionTime:    nowUTC.Format("15:04:05"),
-		DeviceID:         attendance.DeviceID,
+	now := nowVN()
+	dateStr := now.Format("2006-01-02")
+	status := attendance.AttendanceStatus
+	if status == "" {
+		status = models.StatusPresent
 	}
-	if err := db.DB.Create(&attendance).Error; err != nil {
+
+	// Dedup: one row per (student, class, date) — update status (with audit) instead of duplicating.
+	var dup models.Attendance
+	if db.DB.Where("student_id = ? AND class_id = ? AND date = ?", student.StudentID, class.ClassID, dateStr).
+		First(&dup).Error == nil {
+		old := dup.AttendanceStatus
+		db.DB.Model(&dup).Update("attendance_status", status)
+		writeAudit(c, "update", "attendance", deref(dup.ID), fmt.Sprintf("SV %d (%s→%s) môn %s", student.StudentID, old, status, class.Subject))
+		c.JSON(http.StatusOK, gin.H{"message": "Đã cập nhật điểm danh"})
+		return
+	}
+	id := uuid.New().String()
+	device := attendance.DeviceID
+	if device == "" {
+		device = "manual"
+	}
+	att := models.Attendance{
+		ID: &id, StudentID: student.StudentID, ClassroomID: attendance.ClassroomID,
+		ClassID: &class.ClassID, Subject: &class.Subject, Date: dateStr,
+		AttendanceStatus: status, DetectionTime: now.Format("15:04:05"), DeviceID: device,
+	}
+	if err := db.DB.Create(&att).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create attendance record"})
 		return
 	}
-	notif := models.Notification{
-		ID:        uuid.New().String(),
-		Title:     "attendance",
-		Message:   fmt.Sprintf("Attendance recorded for student %s in class %s", student.StudentName, class.Subject),
-		AccountID: student.AccountID,
-		IsRead:    false,
-		CreatedAt: nowUTC,
+	writeAudit(c, "create", "attendance", id, fmt.Sprintf("SV %d điểm danh '%s' môn %s", student.StudentID, status, class.Subject))
+	c.JSON(http.StatusOK, gin.H{"message": "Đã ghi nhận điểm danh"})
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
 	}
-	if err := db.DB.Create(&notif).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create notification"})
-		return
-	}
-	rabbitmq.Publish("notify.data", notif)
-	c.JSON(http.StatusOK, gin.H{"message": "Attendance record created"})
+	return *s
 }
 func HandlePutAttendance(c *gin.Context) {
 	id := c.Param("id")
@@ -593,6 +601,7 @@ func HandlePutAttendance(c *gin.Context) {
 		return
 	}
 
+	writeAudit(c, "update", "attendance", id, "trạng thái -> "+attendance.AttendanceStatus)
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record updated"})
 }
 
@@ -605,5 +614,6 @@ func HandleDeleteAttendance(c *gin.Context) {
 		return
 	}
 
+	writeAudit(c, "delete", "attendance", id, "xoá bản ghi điểm danh")
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record deleted"})
 }

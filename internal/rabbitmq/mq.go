@@ -45,7 +45,7 @@ func Init() {
 
 	if err = Channel.ExchangeDeclare(
 		ExchangeName,
-		"topic", // routing keys: sensor.*, notify.*
+		"topic", // routing keys: sensor.*, notify.*, attendance.*, classroom.*
 		true,    // durable
 		false,
 		false,
@@ -53,6 +53,15 @@ func Init() {
 		nil,
 	); err != nil {
 		log.Fatalf("Failed to declare exchange: %s", err)
+	}
+
+	// Dead-letter exchange + queue: messages a consumer nacks (poison/failed)
+	// land here instead of being lost.
+	if err = Channel.ExchangeDeclare("dlx", "fanout", true, false, false, false, nil); err != nil {
+		log.Fatalf("Failed to declare DLX: %s", err)
+	}
+	if _, err = Channel.QueueDeclare("dead_letters", true, false, false, false, nil); err == nil {
+		_ = Channel.QueueBind("dead_letters", "", "dlx", false, nil)
 	}
 }
 
@@ -92,7 +101,7 @@ func DeclareQueue(queueName, bindingKey string) (amqp.Queue, error) {
 		false, // delete when unused
 		false, // exclusive
 		false, // no-wait
-		nil,
+		amqp.Table{"x-dead-letter-exchange": "dlx"}, // failed messages -> DLX
 	)
 	if err != nil {
 		log.Printf("Failed to declare queue %s: %s", queueName, err)
@@ -116,7 +125,7 @@ func consume(queueName string, handle func(msg []byte), label string) {
 	msgs, err := Channel.Consume(
 		queueName,
 		"",
-		true,  // auto-acknowledge
+		false, // manual ack — don't lose messages on crash
 		false, // exclusive
 		false, // no-local
 		false, // no-wait
@@ -125,11 +134,47 @@ func consume(queueName string, handle func(msg []byte), label string) {
 	if err != nil {
 		log.Fatalf("Failed to consume from %s queue: %s", queueName, err)
 	}
-	log.Printf("Started consuming from %s queue", queueName)
+	log.Printf("Started consuming from %s queue (manual ack)", queueName)
 	go func() {
 		for msg := range msgs {
-			log.Printf("[%s] received from MQ -> forwarding to WS: %s", label, msg.Body)
-			handle(msg.Body)
+			func(m amqp.Delivery) {
+				// A handler panic must not lose the message: nack -> dead-letter.
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[%s] handler panic: %v -> dead-letter", label, r)
+						_ = m.Nack(false, false)
+					}
+				}()
+				handle(m.Body)
+				_ = m.Ack(false)
+			}(msg)
+		}
+	}()
+}
+
+// ConsumeKeyed declares+binds a queue and consumes with the routing key passed
+// to the handler (used for MQTT device topics classroom.{room}.{kind}.{leaf}).
+func ConsumeKeyed(queueName, bindingKey string, handle func(routingKey string, body []byte)) {
+	if _, err := DeclareQueue(queueName, bindingKey); err != nil {
+		return
+	}
+	msgs, err := Channel.Consume(queueName, "", false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("Failed to consume from %s: %s", queueName, err)
+	}
+	log.Printf("Started consuming %s (key %s)", queueName, bindingKey)
+	go func() {
+		for msg := range msgs {
+			func(m amqp.Delivery) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[%s] panic: %v -> dead-letter", queueName, r)
+						_ = m.Nack(false, false)
+					}
+				}()
+				handle(m.RoutingKey, m.Body)
+				_ = m.Ack(false)
+			}(msg)
 		}
 	}()
 }

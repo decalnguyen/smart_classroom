@@ -1,0 +1,13 @@
+# Jetson Nano (JetPack 4.6 / 5.x) edge recognition dependencies.
+#
+# NOTE: on Jetson you do NOT pip-install onnxruntime-gpu from PyPI — use the
+# NVIDIA-built wheel matching your JetPack (see docs/JETSON_DEPLOYMENT.md).
+# Same for OpenCV (ships with JetPack) and numpy. This file lists the rest.
+
+insightface>=0.7.3        # SCRFD detector + ArcFace recogniser (buffalo_l)
+requests>=2.31.0
+python-dotenv>=1.0.0      # optional: load .env in dev
+
+# onnxruntime-gpu        -> install the NVIDIA Jetson wheel, not the PyPI one
+# opencv-python          -> use the JetPack-provided cv2 (built with CUDA/GStreamer)
+# numpy                  -> use the JetPack-provided numpy

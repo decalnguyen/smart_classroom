@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"fmt"
@@ -26,18 +28,46 @@ func SensorChecker() {
 		}
 	}()
 }
-func CheckSensorStatus() {
-	var sensors []models.Sensor
 
-	// Fetch all active sensors from the database
+// SensorRetentionChecker prunes raw sensor readings older than SENSOR_RETENTION_DAYS
+// (default 7) so the time-series table stays bounded. Production should use a
+// TimescaleDB hypertable + continuous aggregates; this is the minimal policy.
+func SensorRetentionChecker() {
+	days := envInt("SENSOR_RETENTION_DAYS", 7)
+	if days <= 0 {
+		return
+	}
+	go func() {
+		for {
+			cutoff := nowVN().AddDate(0, 0, -days)
+			res := db.DB.Where("timestamp < ?", cutoff).Delete(&models.SenSorData{})
+			if res.RowsAffected > 0 {
+				log.Printf("Retention: pruned %d sensor rows older than %d days", res.RowsAffected, days)
+			}
+			time.Sleep(time.Hour)
+		}
+	}()
+}
+func CheckSensorStatus() {
+	// Inactivity auto-downgrade is opt-in (SENSOR_INACTIVE_MINUTES). Disabled by
+	// default so registered devices remain "Active" unless explicitly enabled.
+	mins := 0
+	if v := os.Getenv("SENSOR_INACTIVE_MINUTES"); v != "" {
+		mins, _ = strconv.Atoi(v)
+	}
+	if mins <= 0 {
+		return
+	}
+	threshold := time.Duration(mins) * time.Minute
+
+	var sensors []models.Sensor
 	if err := db.DB.Where("status = ?", "Active").Find(&sensors).Error; err != nil {
 		log.Printf("Error fetching sensors: %v", err)
 		return
 	}
 
-	// Check each sensor's last activity
 	for _, sensor := range sensors {
-		if time.Since(sensor.Timestamp) > 5*time.Minute { // Threshold: 5 minutes
+		if time.Since(sensor.Timestamp) > threshold {
 			// Update the sensor's status to "inactive" in the Sensor table
 			if err := db.DB.Model(&sensor).Where("status = ?", "Active").Update("status", "Inactive").Error; err != nil {
 				log.Printf("Error updating sensor status for device_id %s: %v", sensor.DeviceID, err)
@@ -286,26 +316,26 @@ func HandlePostDeviceMode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-
-	espURL := fmt.Sprintf("http://%s/%s", deviceType, deviceID)
-	payload := fmt.Sprintf(`{"mode": %d}`, req.Mode)
-
-	// Broadcast the command so other consumers / the UI can react regardless of
-	// whether physical hardware is reachable.
-	rabbitmq.Publish("command.device", gin.H{
-		"device_type": deviceType,
-		"device_id":   deviceID,
-		"mode":        req.Mode,
-	})
-
-	resp, err := http.Post(espURL, "application/json", bytes.NewBufferString(payload))
-	if err != nil {
-		// No physical device in the demo: accept and queue the command.
-		log.Printf("Device %s/%s unreachable (queued command): %v", deviceType, deviceID, err)
-		c.JSON(http.StatusOK, gin.H{"message": "Command queued (device offline)", "device": deviceType, "mode": req.Mode})
+	// Actuator level: 0 = off, 1..3 = on/levels (fan speed; others on=1).
+	if req.Mode < 0 || req.Mode > 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be 0..3"})
 		return
 	}
-	defer resp.Body.Close()
 
-	c.JSON(http.StatusOK, gin.H{"message": "Command sent", "device": deviceType, "mode": req.Mode})
+	// Primary path: publish to the room's MQTT command topic; the device
+	// subscribes (outbound connection → works behind classroom NAT).
+	action := "off"
+	if req.Mode > 0 {
+		action = "on"
+	}
+	PublishDeviceCommand(roomOf(deviceID), deviceType, action, req.Mode, "manual")
+
+	// Legacy best-effort direct HTTP (only works if the device is an HTTP server
+	// reachable from here); bounded timeout so it can't block the goroutine.
+	espURL := fmt.Sprintf("http://%s/%s", deviceType, deviceID)
+	deviceHTTP := &http.Client{Timeout: 3 * time.Second}
+	if resp, err := deviceHTTP.Post(espURL, "application/json", bytes.NewBufferString(fmt.Sprintf(`{"mode": %d}`, req.Mode))); err == nil {
+		resp.Body.Close()
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Command sent", "device": deviceType, "mode": req.Mode, "via": "mqtt"})
 }

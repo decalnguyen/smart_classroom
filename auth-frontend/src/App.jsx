@@ -14,6 +14,10 @@ const Schedule = lazy(() => import('./pages/Schedule'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const MyAttendance = lazy(() => import('./pages/MyAttendance'))
 const Reports = lazy(() => import('./pages/Reports'))
+const Leaves = lazy(() => import('./pages/Leaves'))
+const Review = lazy(() => import('./pages/Review'))
+const Enrollment = lazy(() => import('./pages/Enrollment'))
+const Audit = lazy(() => import('./pages/Audit'))
 const Admin = lazy(() => import('./pages/Admin'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 
@@ -53,11 +57,36 @@ export default function App() {
           <Route path="/my-attendance" element={<MyAttendance />} />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/leaves" element={<Leaves />} />
+          <Route
+            path="/audit"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <Audit />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/reports"
             element={
               <ProtectedRoute roles={['admin', 'teacher']}>
                 <Reports />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/review"
+            element={
+              <ProtectedRoute roles={['admin', 'teacher']}>
+                <Review />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/enrollment"
+            element={
+              <ProtectedRoute roles={['admin']}>
+                <Enrollment />
               </ProtectedRoute>
             }
           />

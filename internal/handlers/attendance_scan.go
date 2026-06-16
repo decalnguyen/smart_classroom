@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
-	"time"
 
 	"smart_classroom/internal/db"
 	"smart_classroom/internal/models"
@@ -22,10 +21,11 @@ type AttendanceEvent struct {
 	ClassroomID uint   `json:"classroom_id"`
 	ClassID     uint   `json:"class_id"`
 	Subject     string `json:"subject"`
-	Status      string `json:"attendance_status"`
-	Time        string `json:"detection_time"`
-	Date        string `json:"date"`
-	DeviceID    string `json:"device_id"`
+	Status      string  `json:"attendance_status"`
+	Time        string  `json:"detection_time"`
+	Date        string  `json:"date"`
+	DeviceID    string  `json:"device_id"`
+	Confidence  float64 `json:"confidence,omitempty"`
 }
 
 // HandleAttendanceScan simulates the edge AI camera reporting a recognized face.
@@ -38,10 +38,12 @@ type AttendanceEvent struct {
 // realtime attendance channel so the web updates live (name, MSSV, time, status).
 func HandleAttendanceScan(c *gin.Context) {
 	var req struct {
-		ClassroomID uint   `json:"classroom_id"`
-		StudentID   uint   `json:"student_id"`
-		DeviceID    string `json:"device_id"`
-		Status      string `json:"status"` // present | late (default present)
+		ClassroomID uint      `json:"classroom_id"`
+		StudentID   uint      `json:"student_id"`
+		DeviceID    string    `json:"device_id"`
+		Status      string    `json:"status"`     // present | late (default present)
+		Embedding   []float64 `json:"embedding"`  // optional ArcFace 512-d from the edge
+		EventID     string    `json:"event_id"`   // optional edge-side idempotency key
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
@@ -51,24 +53,52 @@ func HandleAttendanceScan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "classroom_id is required"})
 		return
 	}
-	status := "present"
-	if req.Status == "late" {
-		status = "late"
-	}
 	if req.DeviceID == "" {
 		req.DeviceID = fmt.Sprintf("cam-%d", req.ClassroomID)
 	}
 
-	loc := time.FixedZone("UTC+7", 7*60*60)
-	now := time.Now().In(loc)
-	weekday := now.Weekday().String()
+	now := nowVN()
 
-	// Find the ongoing class in this classroom.
-	var class models.Class
-	if err := db.DB.Where("classroom_id = ? AND day_of_week = ? AND start_time <= ? AND end_time >= ?",
-		req.ClassroomID, weekday, now, now).First(&class).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No ongoing class in this classroom"})
+	// Find the ongoing period for this classroom (respects holidays/makeups).
+	class, ok := findOngoingClass(req.ClassroomID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không có tiết học đang diễn ra trong phòng này"})
 		return
+	}
+	// Late policy: present within grace of the period start, else late.
+	status := checkinStatus(class)
+	if req.Status == models.StatusLate {
+		status = models.StatusLate
+	}
+
+	// Edge recognition path: when the camera sends a 512-d embedding, match it
+	// against the classroom gallery (pgvector cosine) and apply confidence gating:
+	//   sim >= T_high → accept (auto-mark); T_low <= sim < T_high → human review;
+	//   sim < T_low   → unknown face (ignored).
+	confidence := 1.0
+	if len(req.Embedding) == 512 {
+		sid, mssv, name, sim, matched := recognizeByEmbedding(req.ClassroomID, req.Embedding)
+		if !matched {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Chưa có khuôn mặt ghi danh trong phòng này"})
+			return
+		}
+		confidence = sim
+		switch {
+		case sim < tLow():
+			c.JSON(http.StatusOK, gin.H{"message": "Khuôn mặt không xác định", "confidence": sim})
+			return
+		case sim < tHigh():
+			db.DB.Create(&models.FaceReview{
+				StudentID: sid, MSSV: mssv, StudentName: name,
+				ClassroomID: req.ClassroomID, ClassID: class.ClassID, Subject: class.Subject,
+				Confidence: sim, Date: now.Format("2006-01-02"),
+				DetectionTime: now.Format("15:04:05"), DeviceID: req.DeviceID, Status: "pending",
+			})
+			c.JSON(http.StatusOK, gin.H{"message": "Độ tin cậy thấp — chờ duyệt", "confidence": sim, "student_name": name})
+			return
+		default:
+			req.StudentID = sid // high confidence → treat as a positive recognition
+		}
 	}
 
 	// Resolve the recognized student.
@@ -101,10 +131,39 @@ func HandleAttendanceScan(c *gin.Context) {
 				candidates = append(candidates, s)
 			}
 		}
-		if len(candidates) == 0 {
-			candidates = enrolled // everyone already present: re-scan a random one
+		// Cap attendance at ~90% so the numbers stay realistic (not everyone
+		// shows up). Beyond the cap, just re-broadcast an already-present student
+		// to keep the live recognition feed alive — without creating a new row.
+		target := int(0.9 * float64(len(enrolled)))
+		if len(present) >= target || len(candidates) == 0 {
+			if len(presentIDs) > 0 {
+				var st models.Student
+				if db.DB.Where("student_id = ?", presentIDs[rand.Intn(len(presentIDs))]).First(&st).Error == nil {
+					rabbitmq.Publish("attendance.event", AttendanceEvent{
+						StudentID: st.StudentID, MSSV: st.MSSV, StudentName: st.StudentName,
+						ClassroomID: req.ClassroomID, ClassID: class.ClassID, Subject: class.Subject,
+						Status: "present", Time: now.Format("15:04:05"), Date: now.Format("2006-01-02"), DeviceID: req.DeviceID,
+					})
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Lớp đã đạt tỉ lệ điểm danh mục tiêu"})
+			return
 		}
 		student = candidates[rand.Intn(len(candidates))]
+	}
+
+	dateStr := now.Format("2006-01-02")
+
+	// Dedup: one attendance row per (student, class, date). Update status if it
+	// already exists instead of inserting a duplicate (prevents rate > 100%).
+	var existing models.Attendance
+	if db.DB.Where("student_id = ? AND class_id = ? AND date = ?", student.StudentID, class.ClassID, dateStr).
+		First(&existing).Error == nil {
+		if existing.AttendanceStatus != status {
+			db.DB.Model(&existing).Update("attendance_status", status)
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Học sinh đã được điểm danh trước đó", "student_id": student.StudentID})
+		return
 	}
 
 	id := uuid.New().String()
@@ -114,7 +173,7 @@ func HandleAttendanceScan(c *gin.Context) {
 		ClassroomID:      req.ClassroomID,
 		ClassID:          &class.ClassID,
 		Subject:          &class.Subject,
-		Date:             now.Format("2006-01-02"),
+		Date:             dateStr,
 		AttendanceStatus: status,
 		DetectionTime:    now.Format("15:04:05"),
 		DeviceID:         req.DeviceID,
@@ -136,6 +195,7 @@ func HandleAttendanceScan(c *gin.Context) {
 		Time:        att.DetectionTime,
 		Date:        att.Date,
 		DeviceID:    req.DeviceID,
+		Confidence:  confidence,
 	}
 	rabbitmq.Publish("attendance.event", event)
 

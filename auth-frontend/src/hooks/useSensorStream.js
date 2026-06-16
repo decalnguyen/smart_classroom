@@ -18,7 +18,7 @@ function metricOf(deviceType = '') {
  *  - points: rolling array of merged snapshots for charting
  *  - devices: { [device_id]: lastReading }
  */
-export default function useSensorStream(maxPoints = 40) {
+export default function useSensorStream(maxPoints = 40, room = null) {
   const [latest, setLatest] = useState({})
   const [points, setPoints] = useState([])
   const [devices, setDevices] = useState({})
@@ -27,6 +27,8 @@ export default function useSensorStream(maxPoints = 40) {
   const onMessage = useCallback(
     (msg) => {
       if (!msg || typeof msg !== 'object' || !msg.device_type) return
+      // Optionally focus a single room (device_id like "A101-temp").
+      if (room && !(msg.device_id || '').startsWith(room + '-')) return
       const metric = metricOf(msg.device_type)
       const value = Number(msg.value)
       const ts = msg.timestamp ? new Date(msg.timestamp) : new Date()
@@ -49,7 +51,7 @@ export default function useSensorStream(maxPoints = 40) {
         return next.slice(-maxPoints)
       })
     },
-    [maxPoints]
+    [maxPoints, room]
   )
 
   const { status } = useWebSocket(`${WS_BASE_URL}/ws/sensor`, onMessage)

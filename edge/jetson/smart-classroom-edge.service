@@ -1,0 +1,25 @@
+# systemd unit for the Jetson edge recognition service.
+# Install:
+#   sudo cp smart-classroom-edge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now smart-classroom-edge
+# Logs:  journalctl -u smart-classroom-edge -f
+
+[Unit]
+Description=Smart Classroom Jetson edge face recognition
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson
+WorkingDirectory=/opt/smart-classroom-edge
+EnvironmentFile=/opt/smart-classroom-edge/.env
+ExecStart=/usr/bin/python3 /opt/smart-classroom-edge/recognize_service.py
+Restart=always
+RestartSec=5
+# Nano power: keep it from being OOM-killed before others.
+OOMScoreAdjust=-200
+
+[Install]
+WantedBy=multi-user.target

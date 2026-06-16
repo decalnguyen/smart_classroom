@@ -37,14 +37,19 @@ Response `200`:
 
 ## 2. Sensors & devices
 
-### POST /sensor — *Public (device ingestion: ESP32 / simulator)*
+### POST /sensor — *Device (`X-Device-Key` header)*
+ESP32 / simulator ingestion. The header must match `DEVICE_API_KEY` or a registered `DeviceCredential.token` (missing/invalid → `401`).
 Request:
 ```json
 { "device_id": "A101-smoke", "device_type": "smoke", "value": 320.5, "status": "active" }
 ```
 `device_type`: `light` | `temperature` | `humidity` | `smoke` | …
-Side effects: persists reading, publishes `sensor.data` (→ `/ws/sensor`), and runs danger-threshold evaluation (smoke/temperature) → may raise an alert (→ `/ws/notifications`) + buzzer command.
+Side effects: persists reading, publishes `sensor.data` (→ `/ws/sensor`), and runs danger-threshold evaluation (smoke/temperature) → may raise an alert (→ `/ws/notifications`) + buzzer command on `/{room}/buzzer/cmd`.
 Response `200`: `{ "message": "Data received" }`
+
+> ESP32 nodes publish over **MQTT** (port 1883, user/pass admin/admin) to `/<room>/<device>/value` (e.g. `/A101/temp/value`); the `rabbitmq_mqtt` plugin maps that onto `.<room>.<device>.value` which the backend bridge ingests (same effects as `POST /sensor`). See §8.
+
+### POST /device/heartbeat — *Device (`X-Device-Key`)* — `{ "device_id": "cam-1" }`; updates `last_seen`.
 
 ### GET /sensor/:device_id?start=&end= — *Auth*
 Returns historical readings (array of SensorData). `start`/`end` optional time filters.
@@ -56,10 +61,10 @@ Returns historical readings (array of SensorData). `start`/`end` optional time f
 ### PUT /sensorinf/:device_id — *Admin*.
 ### DELETE /sensorinf/:device_id — *Admin*.
 
-### POST /device/:device_type/:device_id/mode — *Staff* — control a device (light/fan).
-Request: `{ "mode": 1 }` (int; 0=off, 1=on). `device_type`/`device_id` must match `^[A-Za-z0-9_.-]{1,128}$`.
-Response `200`: `{ "message": "Command sent" | "Command queued (device offline)", "device", "mode" }`
-Also publishes `command.device`.
+### POST /device/:device_type/:device_id/mode — *Staff* — control an actuator (light/fan/led/buzzer).
+Request: `{ "mode": 0..3 }` (0 = off; fan uses 1–3 as speed; on/off devices treat >0 as on). `device_type`/`device_id` must match `^[A-Za-z0-9_.-]{1,128}$`.
+Publishes the MQTT command `/<room>/<device>/cmd` with `{"value":N,"level":N,"action":"on|off"}` (room derived from `device_id`, e.g. `A101-fan` → `/A101/fan/cmd`).
+Response `200`: `{ "message": "Command sent", "device", "mode", "via": "mqtt" }`
 
 ### Electricity — `GET /electricity?id=&type=` (*Auth*), `POST/PUT/DELETE /electricity[/:id]` (*Staff*).
 
@@ -142,17 +147,43 @@ Request: `{ "student_id": 22520001, "classroom_id": 1, "attendance_status": "pre
 
 ### PUT /attendance/:id — *Staff*. ### DELETE /attendance/:id — *Staff*.
 
-### POST /attendance/scan — *Public (AI camera / simulator)*  ⭐ face-scan success
-Simulates the edge camera reporting a recognized face.
-Request:
+### POST /attendance/scan — *Device (`X-Device-Key`)*  ⭐ face-scan success
+The edge camera (Jetson) reports a recognized face. Three input modes:
 ```json
-{ "classroom_id": 1, "student_id": 22520001, "device_id": "cam-1" }
+{ "classroom_id": 1, "embedding": [/* 512 floats */], "event_id": "cam-1-...", "device_id": "cam-1" }   // real recognition
+{ "classroom_id": 1, "student_id": 22520001, "device_id": "cam-1" }                                       // edge already resolved id
+{ "classroom_id": 1, "device_id": "cam-1" }                                                               // demo: random enrolled student
 ```
-`student_id` optional — if omitted the server picks a random enrolled student of the ongoing class not yet present. Persists `present` attendance and broadcasts an `attendance.event` (→ `/ws/attendance`).
-Response `200`:
+**Confidence gate** (when `embedding` is sent — kNN weighted cosine vote vs the classroom pgvector gallery):
+`sim ≥ FACE_T_HIGH` (0.60) → mark attendance; `FACE_T_LOW ≤ sim < FACE_T_HIGH` → queued to `/review-queue` (no mark); `sim < FACE_T_LOW` (0.45) → ignored as unknown. Late policy applies (present within grace of period start, else `late`). Dedup is per `(student, class, date)`.
+Response `200` (accepted): `{ "message": "Face recognized", "event": { ...AttendanceEvent, "confidence" } }`
+Response `200` (review/unknown): `{ "message": "Độ tin cậy thấp — chờ duyệt", "confidence": 0.6 }` / `{ "message": "Khuôn mặt không xác định", "confidence": 0.4 }`
+
+### POST /enrollment/face — *Admin* — store a student's reference embedding(s)
+Stores **multiple** reference vectors per student (original + augmented), mirroring the trained FAISS gallery.
 ```json
-{ "message": "Face recognized", "event": { ...AttendanceEvent } }
+{ "mssv": "22520001", "embeddings": [[/* 512 */], [/* 512 */]], "replace": true, "source": "bulk" }
+// single vector also accepted: { "student_id": 22520001, "embedding": [/* 512 */] }
 ```
+`replace` (default true) clears the student's existing vectors first. → `{ "message", "student_id", "samples": N }`
+
+### POST /enrollment/face/photo — *Admin* — enroll from an uploaded photo (multipart)
+Fields: `image` (file) + `student_id` or `mssv`. The backend forwards the image to the optional `face-enroll` service (`FACE_ENROLL_URL`), which extracts the embedding (same model) + augmented variants, then stores them. `503` if the service is not running. → `{ "message", "student_id", "samples" }`
+
+### GET /enrollment/status — *Staff* — who has a face enrolled
+Query: `?classroom_id=` (scope to a room), `?q=` (search mssv/name), `?only=enrolled|missing`.
+→ `{ "students": [ { "student_id", "mssv", "student_name", "samples" } ], "enrolled_total" }`
+
+### DELETE /enrollment/face/:student_id — *Admin* — remove all of a student's reference embeddings.
+
+### GET /enrollment/gallery?classroom_id= — *Device (`X-Device-Key`)* — sync gallery to the edge
+Returns **all** vectors (several per student) so the Jetson rebuilds a FAISS gallery for the kNN vote.
+→ `{ "classroom_id", "count", "faces": [ { "student_id", "mssv", "student_name", "embedding": "[...]" } ] }`
+
+### GET /review-queue?status=pending|confirmed|rejected — *Staff* — low-confidence matches awaiting review
+### POST /review-queue/:id — *Staff* — `{ "decision": "confirm" | "reject" }`; `confirm` creates the attendance.
+
+> **Matching:** recognition uses a **kNN (k=`FACE_KNN`, default 5) weighted cosine vote** within the classroom's enrolled students, with thresholds `FACE_T_HIGH` (0.60, accept) / `FACE_T_LOW` (0.45, below = unknown; between = review) — the same scheme/threshold as the trained model. See [ENROLLMENT.md](ENROLLMENT.md).
 
 ---
 
@@ -216,4 +247,11 @@ Durable **topic** exchange `main_exchange`. Producers (HTTP API) publish; the We
 | `sensor.data` | `sensor_data` (`sensor.*`) | `/ws/sensor` |
 | `notify.data` | `notification_data` (`notify.*`) | `/ws/notifications` |
 | `attendance.event` | `attendance_data` (`attendance.*`) | `/ws/attendance` |
-| `command.buzzer`, `command.device` | (device command channel) | — |
+| `.<room>.<device>.value` | `mqtt_device_ingest` (`#.value`) | ingested as a reading (MQTT bridge) |
+| `.<room>.<device>.cmd` | (consumed by the ESP32 over MQTT) | actuator command (buzzer/fan/light/led) |
+
+**MQTT device topics** (`rabbitmq_mqtt`, port `1883`, user/pass **admin/admin**, `mqtt.exchange=main_exchange`, `/`→`.`):
+- Device publishes `/<room>/<device>/value` with `{"value": <num|string>}` — e.g. `/A101/temp/value {"value":29.5}`, `/A101/smoke/value {"value":"2000"}`, `/A101/ip/value {"value":"192.168.1.50"}`. The leading `/` maps to a leading `.`, so the backend binds `#.value` to catch every room/device (no per-topic setup; new rooms just work).
+- Server commands `/<room>/<device>/cmd` with `{"value":N,"level":N,"action":"on|off"}` (the fan reads `level`). Device subscribes `/<room>/+/cmd`.
+
+**Reliability:** queues declare a dead-letter exchange (`dlx` → `dead_letters`); consumers use **manual ack** (Nack on panic).

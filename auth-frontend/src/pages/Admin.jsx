@@ -39,7 +39,7 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import LinkOffIcon from '@mui/icons-material/LinkOff'
 import { useAuth } from '../context/AuthContext'
-import { schoolApi, classroomTeacherApi, apiError } from '../api/client'
+import { schoolApi, classroomTeacherApi, holidayApi, apiError } from '../api/client'
 
 // ---- Tab configuration: each tab declares its key, label, columns + api ----
 const TABS = [
@@ -66,6 +66,7 @@ const TABS = [
       { key: 'classroom_name', label: 'Tên phòng học', type: 'text', required: true },
       { key: 'subject', label: 'Môn học', type: 'text', required: true },
       { key: 'building_id', label: 'Mã tòa nhà', type: 'number', required: true },
+      { key: 'capacity', label: 'Sức chứa', type: 'number' },
     ],
     api: {
       list: schoolApi.getClassrooms,
@@ -108,7 +109,77 @@ const TABS = [
     },
   },
   { label: 'Phân công GV', custom: 'assignments' },
+  { label: 'Ngày lễ', custom: 'holidays' },
 ]
+
+// Holiday manager (attendance is skipped on these dates).
+function HolidaysPanel({ notify }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [date, setDate] = useState('')
+  const [name, setName] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const { data } = await holidayApi.list()
+      setRows(Array.isArray(data) ? data : [])
+    } catch (err) {
+      notify('error', apiError(err, 'Không tải được ngày lễ.'))
+    } finally {
+      setLoading(false)
+    }
+  }, [notify])
+  useEffect(() => { load() }, [load])
+
+  const add = async () => {
+    if (!date) { notify('warning', 'Chọn ngày.'); return }
+    try {
+      await holidayApi.create(date, name)
+      notify('success', 'Đã thêm ngày lễ.')
+      setDate(''); setName('')
+      await load()
+    } catch (err) { notify('error', apiError(err, 'Thêm thất bại.')) }
+  }
+  const remove = async (h) => {
+    if (!window.confirm(`Xoá ngày lễ ${h.date}?`)) return
+    try { await holidayApi.remove(h.id); notify('success', 'Đã xoá.'); await load() }
+    catch (err) { notify('error', apiError(err, 'Xoá thất bại.')) }
+  }
+
+  return (
+    <Box>
+      <Typography variant="h6" mb={2}>Ngày lễ / nghỉ (không tính điểm danh)</Typography>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} mb={2}>
+        <TextField size="small" type="date" label="Ngày" value={date} onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+        <TextField size="small" label="Tên ngày lễ" value={name} onChange={(e) => setName(e.target.value)} sx={{ minWidth: 220 }} />
+        <Button variant="contained" startIcon={<AddIcon />} onClick={add}>Thêm</Button>
+      </Stack>
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+      ) : rows.length === 0 ? (
+        <Alert severity="info">Chưa có ngày lễ nào.</Alert>
+      ) : (
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead><TableRow><TableCell>Ngày</TableCell><TableCell>Tên</TableCell><TableCell align="right">Thao tác</TableCell></TableRow></TableHead>
+            <TableBody>
+              {rows.map((h) => (
+                <TableRow key={h.id} hover>
+                  <TableCell>{h.date}</TableCell>
+                  <TableCell>{h.name}</TableCell>
+                  <TableCell align="right">
+                    <Tooltip title="Xoá"><IconButton size="small" color="error" onClick={() => remove(h)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
+  )
+}
 
 // Teacher ↔ classroom assignment manager.
 function AssignmentPanel({ notify }) {
@@ -565,6 +636,8 @@ export default function Admin() {
           {/* key forces remount per tab so each panel loads its own data */}
           {TABS[tab].custom === 'assignments' ? (
             <AssignmentPanel key="assignments" notify={notify} />
+          ) : TABS[tab].custom === 'holidays' ? (
+            <HolidaysPanel key="holidays" notify={notify} />
           ) : (
             <CrudTable key={TABS[tab].label} cfg={TABS[tab]} notify={notify} />
           )}

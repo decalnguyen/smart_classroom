@@ -24,6 +24,7 @@ import { useTheme } from '@mui/material/styles'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CancelIcon from '@mui/icons-material/Cancel'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
+import EventBusyIcon from '@mui/icons-material/EventBusy'
 import PercentIcon from '@mui/icons-material/Percent'
 import GroupsIcon from '@mui/icons-material/Groups'
 import AssessmentIcon from '@mui/icons-material/Assessment'
@@ -83,16 +84,17 @@ export default function Reports() {
 
   const grid = theme.palette.mode === 'dark' ? 'rgba(148,163,184,0.15)' : '#eef2f7'
   const axisTick = { fontSize: 11, fill: theme.palette.text.secondary }
-  const totals = data?.totals || { present: 0, late: 0, absent: 0, enrolled: 0, rate: 0 }
+  const totals = data?.totals || { present: 0, late: 0, excused: 0, absent: 0, enrolled: 0, rate: 0 }
   const ratePct = Math.round((totals.rate || 0) * 100)
   const byClassroom = data?.by_classroom || []
   const byDate = data?.by_date || []
   const pieData = [
     { name: 'Có mặt', value: totals.present },
     { name: 'Đi muộn', value: totals.late || 0 },
+    { name: 'Có phép', value: totals.excused || 0 },
     { name: 'Vắng', value: totals.absent },
   ]
-  const PIE_COLORS = ['#16a34a', '#ea580c', '#dc2626']
+  const PIE_COLORS = ['#16a34a', '#ea580c', '#0891b2', '#dc2626']
 
   const dateInputs = (
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
@@ -116,15 +118,16 @@ export default function Reports() {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {/* KPI */}
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5, 1fr)' }, mb: 3 }}>
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }, mb: 3 }}>
         {loading ? (
-          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} variant="rounded" height={92} />)
+          Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} variant="rounded" height={92} />)
         ) : (
           <>
             <StatCard icon={<CheckCircleIcon />} value={totals.present} label="Có mặt" color="#16a34a" />
             <StatCard icon={<AccessTimeIcon />} value={totals.late || 0} label="Đi muộn" color="#ea580c" />
+            <StatCard icon={<EventBusyIcon />} value={totals.excused || 0} label="Có phép" color="#0891b2" />
             <StatCard icon={<CancelIcon />} value={totals.absent} label="Vắng" color="#dc2626" />
-            <StatCard icon={<GroupsIcon />} value={totals.enrolled} label="Sĩ số (ngày)" color="#2563eb" />
+            <StatCard icon={<GroupsIcon />} value={totals.enrolled} label="Sĩ số" color="#2563eb" />
             <StatCard icon={<PercentIcon />} value={`${ratePct}%`} label="Tỉ lệ tham gia" color="#7c3aed" />
           </>
         )}
@@ -158,6 +161,7 @@ export default function Reports() {
                         <Legend />
                         <Bar dataKey="present" name="Có mặt" stackId="a" fill="#16a34a" />
                         <Bar dataKey="late" name="Đi muộn" stackId="a" fill="#ea580c" />
+                        <Bar dataKey="excused" name="Có phép" stackId="a" fill="#0891b2" />
                         <Bar dataKey="absent" name="Vắng" stackId="a" fill="#dc2626" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -220,6 +224,7 @@ export default function Reports() {
                       <TableCell align="right">Sĩ số</TableCell>
                       <TableCell align="right">Có mặt</TableCell>
                       <TableCell align="right">Đi muộn</TableCell>
+                      <TableCell align="right">Có phép</TableCell>
                       <TableCell align="right">Vắng</TableCell>
                       <TableCell sx={{ minWidth: 160 }}>Tỉ lệ</TableCell>
                     </TableRow>
@@ -234,6 +239,7 @@ export default function Reports() {
                           <TableCell align="right">{r.enrolled}</TableCell>
                           <TableCell align="right"><Chip size="small" color="success" label={r.present} /></TableCell>
                           <TableCell align="right"><Chip size="small" color="warning" label={r.late || 0} /></TableCell>
+                          <TableCell align="right"><Chip size="small" color="info" label={r.excused || 0} /></TableCell>
                           <TableCell align="right"><Chip size="small" color="error" label={r.absent} /></TableCell>
                           <TableCell>
                             <Stack direction="row" alignItems="center" spacing={1}>

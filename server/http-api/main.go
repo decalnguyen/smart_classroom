@@ -32,7 +32,10 @@ func main() {
 	handlers.SeedMockData()
 	handlers.SeedTeacherAssignments()
 	handlers.SeedAccountLinks()
+	handlers.SeedTodayAttendance()
+	handlers.SeedDeviceCredentials()
 	rabbitmq.Init()
+	handlers.StartMQTTBridge() // ingest MQTT sensor topics + device command acks
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
@@ -43,13 +46,21 @@ func main() {
 	}))
 
 	// ---- Public (no auth) ----
-	r.POST("/signup", handlers.SignUp)
-	r.POST("/login", handlers.Login)
+	r.POST("/signup", middleware.RateLimit(10), handlers.SignUp)
+	r.POST("/login", middleware.RateLimit(20), handlers.Login) // brute-force protection
 	r.POST("/logout", handlers.Logout)
 
-	// Device ingestion (no user JWT): ESP32 sensors + AI camera face-scan events.
-	r.POST("/sensor", handlers.HandlePostSensorData)
-	r.POST("/attendance/scan", handlers.HandleAttendanceScan)
+	// Device ingestion (authenticated by per-device key, not user JWT):
+	// ESP32 sensors + AI camera face-scan events.
+	device := r.Group("/")
+	device.Use(middleware.RequireDevice())
+	{
+		device.POST("/sensor", handlers.HandlePostSensorData)
+		device.POST("/attendance/scan", handlers.HandleAttendanceScan)
+		device.POST("/device/heartbeat", handlers.HandleDeviceHeartbeat)
+		// Jetson syncs the classroom face gallery to match on the edge.
+		device.GET("/enrollment/gallery", handlers.HandleGetGallery)
+	}
 
 	// ---- Authenticated (any role) ----
 	auth := r.Group("/")
@@ -59,6 +70,13 @@ func main() {
 		auth.GET("/stats/overview", handlers.HandleStatsOverview)
 		auth.GET("/my/classrooms", handlers.HandleMyClassrooms)
 		auth.GET("/my/attendance", handlers.HandleMyAttendance)
+		auth.GET("/classrooms/overview", handlers.HandleClassroomsOverview)
+		auth.GET("/semesters", handlers.HandleGetSemesters)
+		auth.GET("/holidays", handlers.HandleGetHolidays)
+
+		// Leave requests: students create + see own; everyone lists (handler scopes).
+		auth.GET("/leaves", handlers.HandleListLeaves)
+		auth.POST("/leaves", handlers.HandleCreateLeave)
 
 		// Reads available to every authenticated user.
 		auth.GET("/sensor/:device_id", handlers.HandleGetSensorData)
@@ -112,6 +130,16 @@ func main() {
 		// Attendance analytics (scoped: teacher = own classrooms, admin = all).
 		staff.GET("/reports/attendance", handlers.HandleAttendanceReport)
 		staff.GET("/reports/attendance/export", handlers.HandleAttendanceReportExport)
+
+		// Leave approval.
+		staff.PUT("/leaves/:id/review", handlers.HandleReviewLeave)
+
+		// Face-recognition review queue (low-confidence matches).
+		staff.GET("/review-queue", handlers.HandleGetReviewQueue)
+		staff.POST("/review-queue/:id", handlers.HandleReviewDecision)
+
+		// Face enrollment status (who has a face registered) — read for staff.
+		staff.GET("/enrollment/status", handlers.HandleEnrollStatus)
 	}
 
 	// ---- Admin only ----
@@ -143,10 +171,25 @@ func main() {
 		admin.GET("/classroom-teachers", handlers.HandleGetClassroomTeachers)
 		admin.POST("/classroom-teachers", handlers.HandlePostClassroomTeacher)
 		admin.DELETE("/classroom-teachers", handlers.HandleDeleteClassroomTeacher)
+
+		// Audit log, holidays, makeup sessions, enrollment management.
+		admin.GET("/audit", handlers.HandleGetAudit)
+		admin.POST("/holidays", handlers.HandleCreateHoliday)
+		admin.DELETE("/holidays/:id", handlers.HandleDeleteHoliday)
+		admin.POST("/makeups", handlers.HandleCreateMakeup)
+		admin.POST("/classes/:id/students", handlers.HandleEnrollStudent)
+		admin.DELETE("/classes/:id/students/:student_id", handlers.HandleUnenrollStudent)
+
+		// Face enrollment (store a student's reference embeddings).
+		admin.POST("/enrollment/face", handlers.HandleEnrollFace)            // raw embeddings
+		admin.POST("/enrollment/face/photo", handlers.HandleEnrollPhoto)    // image -> face-enroll service
+		admin.DELETE("/enrollment/face/:student_id", handlers.HandleDeleteFace)
 	}
 
-	// Background sensor liveness checker.
+	// Background workers.
 	handlers.SensorChecker()
+	handlers.SensorRetentionChecker()    // prune old time-series rows
+	handlers.AutoAbsentChecker()         // auto-mark absent after each period ends
 
 	port := os.Getenv("HTTP_PORT")
 	if port == "" {

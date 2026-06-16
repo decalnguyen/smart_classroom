@@ -2,12 +2,79 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"smart_classroom/internal/db"
+	"smart_classroom/internal/models"
 	"smart_classroom/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
+
+// RateLimit is a simple in-memory sliding-window limiter per client IP.
+// Protects brute-forceable endpoints (e.g. /login) and device ingestion.
+var (
+	rlMu   sync.Mutex
+	rlHits = map[string][]int64{}
+)
+
+func RateLimit(maxPerMinute int) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		now := time.Now().UnixMilli()
+		cutoff := now - 60_000
+		rlMu.Lock()
+		kept := rlHits[ip][:0]
+		for _, t := range rlHits[ip] {
+			if t > cutoff {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) >= maxPerMinute {
+			rlHits[ip] = kept
+			rlMu.Unlock()
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "Quá nhiều yêu cầu, vui lòng thử lại sau"})
+			return
+		}
+		rlHits[ip] = append(kept, now)
+		rlMu.Unlock()
+		c.Next()
+	}
+}
+
+// RequireDevice authenticates an edge device (ESP32 / Jetson) via the
+// X-Device-Key header. Accepts either the shared DEVICE_API_KEY (env) or a
+// per-device token registered in device_credentials. Sets device_id in context.
+func RequireDevice() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.GetHeader("X-Device-Key")
+		if key == "" {
+			key = ExtractToken(c) // also allow Authorization: Bearer <token>
+		}
+		if key == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing device key"})
+			return
+		}
+		// Shared master key (fast path for fleets behind a gateway).
+		if master := os.Getenv("DEVICE_API_KEY"); master != "" && key == master {
+			c.Next()
+			return
+		}
+		// Per-device token.
+		var cred models.DeviceCredential
+		if err := db.DB.Where("token = ? AND active = ?", key, true).First(&cred).Error; err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid device key"})
+			return
+		}
+		db.DB.Model(&models.DeviceCredential{}).Where("device_id = ?", cred.DeviceID).Update("last_seen", time.Now())
+		c.Set("device_id", cred.DeviceID)
+		c.Set("device_kind", cred.Kind)
+		c.Next()
+	}
+}
 
 // ExtractToken pulls the JWT from either the `Authorization: Bearer <token>`
 // header or the `auth_token` cookie, so both the SPA (header) and any
