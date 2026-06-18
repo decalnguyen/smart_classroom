@@ -39,6 +39,16 @@ function relTime(value) {
   return d.fromNow()
 }
 
+// Map raw notification.title keys to human-readable Vietnamese labels.
+const TITLE_LABELS = {
+  alert: 'Cảnh báo an toàn',
+  leave: 'Đơn xin nghỉ',
+  attendance: 'Điểm danh',
+}
+function titleLabel(t) {
+  return TITLE_LABELS[t] || t || 'Thông báo'
+}
+
 export default function Notifications() {
   const { notifications, unreadCount, markRead, refresh } = useRealtime()
   const [busyId, setBusyId] = useState(null)
@@ -78,10 +88,7 @@ export default function Notifications() {
     if (unread.length === 0) return
     setMarkingAll(true)
     try {
-      for (const n of unread) {
-        // eslint-disable-next-line no-await-in-loop
-        await markRead(n.id)
-      }
+      await Promise.all(unread.map((n) => markRead(n.id)))
     } catch {
       setError('Không thể đánh dấu tất cả đã đọc.')
     } finally {
@@ -235,7 +242,7 @@ export default function Notifications() {
                           fontWeight={unread ? 700 : 500}
                           color={isAlert ? 'error.main' : 'text.primary'}
                         >
-                          {isAlert ? 'Cảnh báo' : n.title || 'Thông báo'}
+                          {titleLabel(n.title)}
                         </Typography>
                         {unread && (
                           <Chip label="Mới" color="primary" size="small" />

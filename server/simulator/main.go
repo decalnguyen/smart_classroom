@@ -143,10 +143,14 @@ func emit(apiURL, room, suffix, httpType string, value float64) {
 // postScan simulates the AI camera reporting a recognized face. The server
 // resolves a random enrolled student of the ongoing class and records attendance.
 func postScan(scanURL string, classroomID int, status string) {
+	now := time.Now()
 	body, _ := json.Marshal(map[string]interface{}{
 		"classroom_id": classroomID,
 		"device_id":    fmt.Sprintf("cam-%d", classroomID),
 		"status":       status,
+		// Anti-replay fields the backend now requires on device events.
+		"event_id": fmt.Sprintf("cam-%d-%d", classroomID, now.UnixNano()),
+		"ts":       now.Format(time.RFC3339),
 	})
 	code, err := postJSON(scanURL, body)
 	if err != nil {
@@ -197,7 +201,7 @@ func main() {
 
 	// Rooms with real ESP32 hardware: skip simulated sensor data so we don't
 	// clash with the physical devices publishing to the same topics.
-	excludeCSV := env("SENSOR_EXCLUDE_ROOMS", "A101,A102,A103")
+	excludeCSV := env("SENSOR_EXCLUDE_ROOMS", "A101,A102,B101")
 	excluded := parseRoomSet(excludeCSV)
 	rooms := make([]string, 0, len(allRooms))
 	for _, r := range allRooms {

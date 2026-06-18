@@ -48,7 +48,7 @@ func ingestDeviceValue(routingKey string, body []byte) {
 		ip := strings.TrimSpace(fmtValue(p.Value))
 		log.Printf("[device-ip] room=%s ip=%s", room, ip)
 		// Treat as a heartbeat: mark the room's devices alive.
-		db.DB.Model(&models.Sensor{}).Where("device_id LIKE ?", room+"-%").Update("status", "Active")
+		db.DB.Model(&models.Sensor{}).Where("device_id LIKE ?", room+"-%").Update("status", "active")
 		return
 	}
 
@@ -60,15 +60,27 @@ func ingestDeviceValue(routingKey string, body []byte) {
 	if status == "" {
 		status = "active"
 	}
+	// Canonicalize the type so device_id + device_type use the same short code as
+	// every other write path / reader (e.g. /A104/temperature/value -> "temp").
+	saveReading(room, canonicalType(device), val, status)
+}
+
+// saveReading persists one canonical reading and runs the full ingest side-effects
+// (registry heartbeat, realtime publish, danger evaluation). Shared by the MQTT
+// bridge and the demo-telemetry fallback so EVERY reading flows through one path.
+func saveReading(room, dtype string, val float64, status string) {
+	if status == "" {
+		status = "active"
+	}
 	data := models.SenSorData{
-		DeviceID: room + "-" + device, DeviceType: device, Value: val, Status: status, Timestamp: nowVN(),
+		DeviceID: room + "-" + dtype, DeviceType: dtype, Value: val, Status: status, Timestamp: nowVN(),
 	}
 	if err := db.DB.Create(&data).Error; err != nil {
-		log.Printf("MQTT ingest save error: %v", err)
+		log.Printf("ingest save error: %v", err)
 		return
 	}
 	db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
-		Updates(map[string]interface{}{"timestamp": data.Timestamp, "status": "Active"})
+		Updates(map[string]interface{}{"timestamp": data.Timestamp, "status": "active"})
 	rabbitmq.Publish("sensor.data", data) // -> WS /ws/sensor
 	EvaluateAndAlert(data)                // safety thresholds (smoke/temp) -> may issue buzzer cmd
 }

@@ -9,8 +9,12 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import { auditApi, apiError } from '../api/client'
 
-const ACTION_COLOR = { create: 'success', update: 'info', delete: 'error', approved: 'success', rejected: 'error' }
-const ENTITY_LABEL = { attendance: 'Điểm danh', leave_request: 'Đơn nghỉ', holiday: 'Ngày lễ', makeup: 'Buổi bù', enrollment: 'Ghi danh' }
+const ACTION_COLOR = { create: 'success', update: 'info', delete: 'error', approved: 'success', rejected: 'error', confirm: 'success', reject: 'error', enroll: 'success' }
+const ENTITY_LABEL = {
+  attendance: 'Điểm danh', leave_request: 'Đơn nghỉ', holiday: 'Ngày lễ', makeup: 'Buổi bù',
+  enrollment: 'Ghi danh', building: 'Toà nhà', classroom: 'Phòng học', student: 'Học sinh',
+  teacher: 'Giáo viên', face: 'Khuôn mặt', face_review: 'Duyệt khuôn mặt',
+}
 
 export default function Audit() {
   const [rows, setRows] = useState([])
@@ -39,11 +43,14 @@ export default function Audit() {
         title="Nhật ký hệ thống"
         subtitle="Lịch sử thao tác nhạy cảm: ai – làm gì – khi nào (audit log)"
         action={
-          <ToggleButtonGroup size="small" exclusive value={entity} onChange={(_, v) => setEntity(v ?? '')}>
+          <ToggleButtonGroup size="small" exclusive value={entity} onChange={(_, v) => setEntity(v ?? '')} sx={{ flexWrap: 'wrap' }}>
             <ToggleButton value="">Tất cả</ToggleButton>
             <ToggleButton value="attendance">Điểm danh</ToggleButton>
             <ToggleButton value="leave_request">Đơn nghỉ</ToggleButton>
             <ToggleButton value="enrollment">Ghi danh</ToggleButton>
+            <ToggleButton value="classroom">Phòng học</ToggleButton>
+            <ToggleButton value="student">Học sinh</ToggleButton>
+            <ToggleButton value="teacher">Giáo viên</ToggleButton>
           </ToggleButtonGroup>
         }
       />

@@ -151,11 +151,28 @@ classroom/{room}/status              # online/offline (retained, gắn LWT)
 
 ---
 
+## 4b. Ngưỡng báo cháy theo dữ liệu (data-driven, tự hiệu chỉnh)
+
+Ngưỡng còi **không** là hằng số tùy chọn. Nó được suy ra từ **phân bố của chính dữ liệu cảm biến đã thu thập**, theo quy tắc phát hiện bất thường **T = μ + K·σ** (`internal/handlers/threshold_calibration.go`):
+
+| Cảm biến | n thu thập | μ | σ | max quan sát | K | **T = μ+Kσ** (kẹp) | Ngưỡng cũ |
+|---|---|---|---|---|---|---|---|
+| Khói | ~5,1·10⁵ | 104 | 15,6 | 138 | 5 | **182** (∈[150,300]) | 300 |
+| Nhiệt | ~5,1·10⁵ | 27,6 | 1,5 | 30,7 | 8 | **39,7** (∈[35,50]) | 50 |
+
+- **Vì sao tốt hơn ngưỡng cố định:** khói bình thường *chưa từng* vượt 138; ngưỡng cũ 300 ⇒ một đám cháy âm ỉ ở 180–250 (rõ ràng bất thường) **bị bỏ sót**. T=182 cao hơn max quan sát >30% nên **báo giả ≈ 0** (5σ ≈ 1/3,5 triệu mẫu) mà vẫn bắt sớm. *(Đã kiểm chứng: khói=205 → còi kêu + thông báo "ngưỡng 182"; khói=175 → không báo.)*
+- **Kẹp [floor, ceiling]:** *floor* tránh báo trên dao động vặt ở phòng quá yên; *ceiling* là mức nguy hiểm tuyệt đối **luôn** báo, nên baseline trôi hay sensor nhiễu không thể đẩy điểm cắt lên cao mất an toàn.
+- **Chống "nhiễm" baseline:** loại các mẫu ≥ ceiling khi tính μ,σ → một sự cố cháy quá khứ không làm tăng ngưỡng.
+- **Tự hiệu chỉnh:** chạy lại mỗi `THRESHOLD_CAL_SECONDS` (mặc định 1h) trên cửa sổ `THRESHOLD_CAL_WINDOW_DAYS` (14 ngày). Tham số: `SMOKE_SIGMA_K`/`TEMP_SIGMA_K`, `SMOKE_FLOOR`/`CEILING`, `TEMP_FLOOR`/`CEILING`; tắt bằng `THRESHOLD_AUTOCAL=off`. Đặt `SMOKE_THRESHOLD`/`TEMP_THRESHOLD` = **ghi đè thủ công** (ưu tiên cao nhất). ESP32 dùng cùng giá trị (`SMOKE_THR=180`) cho fail-safe cục bộ.
+- **Khớp hướng phát triển (Ch5.3):** thay cơ chế ngưỡng cố định bằng ngưỡng học từ dữ liệu — bước đệm cho dự báo cháy bằng ML.
+
+---
+
 ## 5. Những gì còn thiếu cho một hệ thống production
 
 ### P0 — Chặn production / an toàn / toàn vẹn dữ liệu
-- **Xác thực thiết bị:** `/sensor` & `/attendance/scan` đang công khai, tin `device_id` dạng chuỗi → điểm danh **giả mạo được** và còi báo cháy **kích/chặn được** bởi bất kỳ ai. Cần token/mTLS per-device, ACL theo phòng.
-- **TLS + secrets:** DB `sslmode=disable`, AMQP `guest:guest`, `JWT_SECRET` mặc định, seed `admin/admin123` → bật TLS toàn data-plane, đưa secrets ra vault, fail-closed khi thiếu `JWT_SECRET`.
+- **Xác thực thiết bị (ĐÃ LÀM phần lớn):** `/sensor`, `/attendance/scan`, `/device/heartbeat`, `/enrollment/gallery` nay đều sau `RequireDevice` (`X-Device-Key`: token **per-device** trong `device_credentials` có cờ `active`/revoke, hoặc master key cấu hình — không còn default mất an toàn). Thêm **chống phát lại**: scan/heartbeat phải mang `ts` tươi (cửa sổ lệch) + `event_id` idempotent (`internal/handlers/replay.go`). **Còn lại:** nâng lên **mTLS per-device** + ACL theo phòng (token hiện chưa ràng buộc `classroom_id` của thiết bị với `classroom_id` trong payload).
+- **TLS + secrets:** `JWT_SECRET` & `DEVICE_API_KEY` nay đọc từ env/.env, **fail-fast ở production** nếu thiếu/yếu/dùng default (`utils/jwt.go`, `middleware`). **Còn lại:** bật TLS toàn data-plane (HTTPS/WSS + MQTT `:8883`), DB `sslmode`, AMQP creds mạnh, đưa secrets ra vault.
 - **Messaging không mất mát:** consumer đang `auto-ack=true` (crash giữa chừng = mất tin) → **manual ack + dead-letter queue**; thêm **unique index `(student_id,class_id,date)`** + `event_id` để điểm danh exactly-once (hiện chỉ chống trùng ở tầng ứng dụng, có race).
 - **Schema & time-series:** thay **GORM AutoMigrate** bằng migration có version (golang-migrate/goose); **giới hạn bảng `sen_sor_data`** (đang ghi vô hạn) bằng TimescaleDB/partition + retention/downsampling.
 - **AI thật:** thay nhận diện ngẫu nhiên bằng service suy luận thật trả `student_id + confidence`; **anti-spoofing/liveness**; **consent + hạn lưu** dữ liệu sinh trắc (GDPR-like) + đường xóa.

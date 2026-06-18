@@ -28,11 +28,31 @@ services:
       DB_NAME: ${POSTGRES_DB:-sensordata}
       DB_PORT: "5432"
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASS:-admin}@rabbitmq:5672/
-      JWT_SECRET: ${JWT_SECRET:-dev_insecure_secret_change_me}
-      DEVICE_API_KEY: ${DEVICE_API_KEY:-dev-device-key}
+      # JWT: no insecure default baked in — provide via .env (see .env.example).
+      # In dev, if unset the app generates an ephemeral secret + warns; in prod it fails fast.
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-smart-classroom}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-24}
+      # Device auth: no insecure default baked in (set in .env). Empty = shared
+      # master key disabled (only per-device device_credentials tokens accepted).
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
+      # Anti-replay for device events (Jetson scan/heartbeat): off-switch + skew window.
+      DEVICE_REPLAY_PROTECT: ${DEVICE_REPLAY_PROTECT:-on}
+      DEVICE_EVENT_MAX_SKEW_SECONDS: ${DEVICE_EVENT_MAX_SKEW_SECONDS:-300}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
-      SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
-      TEMP_THRESHOLD: ${TEMP_THRESHOLD:-50}
+      # Alarm thresholds are DATA-DRIVEN (auto-calibrated μ+Kσ from collected data,
+      # see internal/handlers/threshold_calibration.go). Set SMOKE_THRESHOLD /
+      # TEMP_THRESHOLD here ONLY to force a manual override; left unset, the system
+      # calibrates from sen_sor_data. Tunables: SMOKE_SIGMA_K, TEMP_SIGMA_K,
+      # SMOKE_FLOOR/CEILING, TEMP_FLOOR/CEILING, THRESHOLD_CAL_SECONDS, THRESHOLD_AUTOCAL=off.
+      SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-}
+      TEMP_THRESHOLD: ${TEMP_THRESHOLD:-}
+      # Uniform room coverage for demos: synthesize telemetry for the real-device
+      # rooms (A101-A103) ONLY while no real ESP32 is publishing (yields by freshness).
+      # Set DEMO_FALLBACK=off once real hardware is attached.
+      DEMO_FALLBACK: ${DEMO_FALLBACK:-on}
+      DEMO_FALLBACK_ROOMS: ${DEMO_FALLBACK_ROOMS:-A101,A102,A103}
+      SENSOR_FRESH_SECONDS: ${SENSOR_FRESH_SECONDS:-30}
       # Recognition thresholds (match the trained model in NhanDangMSSV/).
       FACE_T_HIGH: ${FACE_T_HIGH:-0.60}
       FACE_T_LOW: ${FACE_T_LOW:-0.45}
@@ -84,7 +104,7 @@ services:
       SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-300}
       # Slower face-scan cadence so attendance fills realistically (not 100%).
       SCAN_EVERY_SECONDS: ${SIM_SCAN_EVERY:-20}
-      DEVICE_API_KEY: ${DEVICE_API_KEY:-dev-device-key}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
     depends_on:
       - backend
       - rabbitmq

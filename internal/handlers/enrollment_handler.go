@@ -322,7 +322,8 @@ func recognizeByEmbedding(classroomID uint, emb []float64) (uint, string, string
 	return bestID, best.mssv, best.name, confidence, true
 }
 
-// HandleGetReviewQueue lists low-confidence recognitions (staff).
+// HandleGetReviewQueue lists low-confidence recognitions (staff). A teacher only
+// sees reviews for classrooms they are assigned to; admin sees all.
 func HandleGetReviewQueue(c *gin.Context) {
 	var rows []models.FaceReview
 	q := db.DB.Order("created_at desc")
@@ -330,6 +331,14 @@ func HandleGetReviewQueue(c *gin.Context) {
 		q = q.Where("status = ?", c.Query("status"))
 	} else {
 		q = q.Where("status = ?", "pending")
+	}
+	if c.GetString("role") == "teacher" {
+		ids, _ := scopedClassroomIDs(c)
+		if len(ids) == 0 {
+			c.JSON(http.StatusOK, []models.FaceReview{})
+			return
+		}
+		q = q.Where("classroom_id IN ?", ids)
 	}
 	q.Limit(300).Find(&rows)
 	c.JSON(http.StatusOK, rows)
@@ -348,6 +357,11 @@ func HandleReviewDecision(c *gin.Context) {
 	var fr models.FaceReview
 	if err := db.DB.First(&fr, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy"})
+		return
+	}
+	// A teacher may only review items for classrooms assigned to them.
+	if !canManageClassroom(c, fr.ClassroomID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không được phân công lớp này"})
 		return
 	}
 	if req.Decision == "confirm" {

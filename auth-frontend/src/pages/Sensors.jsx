@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box,
   Card,
@@ -34,20 +34,37 @@ import WaterDropIcon from '@mui/icons-material/WaterDrop'
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import AcUnitIcon from '@mui/icons-material/AcUnit'
-import LedIcon from '@mui/icons-material/Highlight'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import DevicesOtherIcon from '@mui/icons-material/DevicesOther'
+import TimelineIcon from '@mui/icons-material/Timeline'
 import dayjs from 'dayjs'
+import { useTheme } from '@mui/material/styles'
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip as RTooltip, ReferenceLine,
+} from 'recharts'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import GaugeCard from '../components/GaugeCard'
 import useSensorStream from '../hooks/useSensorStream'
 import { useAuth } from '../context/AuthContext'
 import { sensorApi, apiError } from '../api/client'
+import { LIGHT_THRESHOLDS, TEMP_THRESHOLDS, HUMIDITY_THRESHOLDS, SMOKE_THRESHOLDS } from '../constants/sensorThresholds'
+
+// History-chart config per metric: device-id suffix, label, unit, color, and the
+// reference lines to overlay (danger boundary in red; comfort-band edges in amber).
+const HIST_METRICS = {
+  temp: { suffix: 'temp', label: 'Nhiệt độ', unit: '°C', color: '#ea580c', refs: [{ y: 50, color: '#dc2626', label: 'Nguy hiểm 50°C' }] },
+  humi: { suffix: 'humi', label: 'Độ ẩm', unit: '%', color: '#0284c7', refs: [{ y: 30, color: '#f59e0b' }, { y: 70, color: '#f59e0b' }] },
+  light: { suffix: 'light', label: 'Ánh sáng', unit: 'lux', color: '#f59e0b', refs: [{ y: 200, color: '#94a3b8' }, { y: 750, color: '#94a3b8' }] },
+  smoke: { suffix: 'smoke', label: 'Khói', unit: 'ppm', color: '#6d4c41', refs: [{ y: 300, color: '#dc2626', label: 'Nguy hiểm 300ppm' }] },
+}
+const HIST_RANGES = { '1h': 3600e3, '6h': 6 * 3600e3, '24h': 24 * 3600e3 }
+const HIST_BUCKET = { '1h': 60e3, '6h': 300e3, '24h': 900e3 }
 
 const EMPTY_FORM = {
   device_id: '',
@@ -58,11 +75,12 @@ const EMPTY_FORM = {
 }
 
 // Actuators controllable from the UI. `levels` lists the allowed command values:
-// the fan has speeds 0–3; on/off devices (đèn/LED/còi) are just 0 (off) / 1 (on).
+// the fan has speeds 0–3; on/off devices (đèn/còi) are just 0 (off) / 1 (on).
+// NOTE: the lamp uses the 'led' channel — the 'light' topic carries the LDR lux
+// READING, so a 'light' actuator would collide with the sensor gauge.
 const ACTUATORS = [
-  { type: 'light', label: 'Đèn', icon: LightbulbIcon, color: '#f59e0b', levels: [0, 1] },
+  { type: 'led', label: 'Đèn', icon: LightbulbIcon, color: '#f59e0b', levels: [0, 1] },
   { type: 'fan', label: 'Quạt', icon: AcUnitIcon, color: '#0284c7', levels: [0, 1, 2, 3] },
-  { type: 'led', label: 'LED', icon: LedIcon, color: '#16a34a', levels: [0, 1] },
   { type: 'buzzer', label: 'Còi', icon: NotificationsActiveIcon, color: '#dc2626', levels: [0, 1] },
 ]
 
@@ -80,12 +98,21 @@ function fmtTs(ts) {
 
 export default function Sensors() {
   const { role } = useAuth()
+  const theme = useTheme()
   const isAdmin = role === 'admin'
   const canControl = role === 'admin' || role === 'teacher'
 
-  const [room, setRoom] = useState('A101')
+  // Empty until devices load — the pickedInitialRoom effect selects the most
+  // recently active room, avoiding a race that subscribes to a dead room.
+  const [room, setRoom] = useState('')
   const { latest, status } = useSensorStream(40, room)
   const online = status === 'open'
+
+  // History trend chart state (one metric + time range at a time).
+  const [histMetric, setHistMetric] = useState('temp')
+  const [histRange, setHistRange] = useState('1h')
+  const [histRows, setHistRows] = useState([])
+  const [histLoading, setHistLoading] = useState(false)
 
   const [devices, setDevices] = useState([])
   const [loading, setLoading] = useState(true)
@@ -100,18 +127,40 @@ export default function Sensors() {
   const [saving, setSaving] = useState(false)
 
   // Actuator command levels (0–3) per device type (optimistic, reset per room).
-  const [levels, setLevels] = useState({ light: 0, fan: 0, led: 0, buzzer: 0 })
+  const [levels, setLevels] = useState({ fan: 0, led: 0, buzzer: 0 })
   const [busyCtrl, setBusyCtrl] = useState(null)
-  useEffect(() => { setLevels({ light: 0, fan: 0, led: 0, buzzer: 0 }) }, [room])
+  useEffect(() => { setLevels({ fan: 0, led: 0, buzzer: 0 }) }, [room])
 
-  // Room list derived from registered devices (+ the wired classrooms A101–A103).
+  // Room list derived from the (role-scoped) registered devices. Admin sees all
+  // rooms; a teacher/student only sees rooms in their teaching/study schedule.
   const rooms = useMemo(() => {
-    const set = new Set(['A101', 'A102', 'A103'])
+    const set = new Set()
     devices.forEach((d) => {
       const r = (d.device_id || '').split('-')[0]
       if (r) set.add(r)
     })
     return [...set].sort()
+  }, [devices])
+
+  // Default to the room with the most-recent activity (by registry heartbeat),
+  // not a hardcoded A101 — so the first view shows a live room, never a dead one.
+  const pickedInitialRoom = useRef(false)
+  useEffect(() => {
+    if (pickedInitialRoom.current || devices.length === 0) return
+    let best = null
+    let bestTs = -1
+    devices.forEach((d) => {
+      const r = (d.device_id || '').split('-')[0]
+      const ts = d.timestamp ? new Date(d.timestamp).getTime() : 0
+      if (r && ts > bestTs) {
+        bestTs = ts
+        best = r
+      }
+    })
+    if (best) {
+      setRoom(best)
+      pickedInitialRoom.current = true
+    }
   }, [devices])
 
   // Latest numeric value for a metric, or null when not yet received.
@@ -168,6 +217,38 @@ export default function Sensors() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Fetch + time-bucket the history for the selected room/metric/range.
+  useEffect(() => {
+    if (!room) { setHistRows([]); return }
+    let active = true
+    const m = HIST_METRICS[histMetric]
+    const rangeMs = HIST_RANGES[histRange]
+    const bucketMs = HIST_BUCKET[histRange]
+    setHistLoading(true)
+    ;(async () => {
+      try {
+        const start = new Date(Date.now() - rangeMs).toISOString()
+        const end = new Date().toISOString()
+        const { data } = await sensorApi.history(`${room}-${m.suffix}`, start, end)
+        const list = Array.isArray(data) ? data : []
+        const agg = new Map()
+        for (const p of list) {
+          const t = Math.floor(new Date(p.timestamp).getTime() / bucketMs) * bucketMs
+          const a = agg.get(t) || { sum: 0, n: 0 }
+          a.sum += Number(p.value); a.n += 1
+          agg.set(t, a)
+        }
+        const rows = [...agg.entries()].map(([t, a]) => ({ t, v: a.sum / a.n })).sort((x, y) => x.t - y.t)
+        if (active) setHistRows(rows)
+      } catch {
+        if (active) setHistRows([])
+      } finally {
+        if (active) setHistLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [room, histMetric, histRange])
 
   const openCreate = () => {
     setEditingId(null)
@@ -261,7 +342,7 @@ export default function Sensors() {
     <Box>
       <PageHeader
         title="Cảm biến & Thiết bị"
-        subtitle="Theo dõi và điều khiển thiết bị trong lớp"
+        subtitle={isAdmin ? 'Theo dõi và điều khiển thiết bị trong lớp' : 'Chỉ hiển thị phòng & khung giờ theo lịch dạy/học của bạn'}
         action={
           <Chip
             label={online ? 'Trực tuyến' : 'Ngoại tuyến'}
@@ -288,6 +369,7 @@ export default function Sensors() {
           max={1000}
           color="#f59e0b"
           icon={<LightModeIcon fontSize="small" />}
+          thresholds={LIGHT_THRESHOLDS}
         />
         <GaugeCard
           label="Nhiệt độ"
@@ -298,6 +380,7 @@ export default function Sensors() {
           color="#ea580c"
           danger={tempVal != null && tempVal >= 50}
           icon={<ThermostatIcon fontSize="small" />}
+          thresholds={TEMP_THRESHOLDS}
         />
         <GaugeCard
           label="Độ ẩm"
@@ -307,6 +390,7 @@ export default function Sensors() {
           max={100}
           color="#0284c7"
           icon={<WaterDropIcon fontSize="small" />}
+          thresholds={HUMIDITY_THRESHOLDS}
         />
         <GaugeCard
           label="Khói / khí gas"
@@ -317,8 +401,60 @@ export default function Sensors() {
           color="#6d4c41"
           danger={smokeVal != null && smokeVal >= 300}
           icon={<LocalFireDepartmentIcon fontSize="small" />}
+          thresholds={SMOKE_THRESHOLDS}
         />
       </Box>
+
+      {/* History trend — how a reading evolved over time (gauges show only "now") */}
+      {room && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <TimelineIcon color="primary" />
+                <Typography variant="h6">Diễn biến theo thời gian — {room}</Typography>
+              </Stack>
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                <ToggleButtonGroup size="small" exclusive value={histMetric} onChange={(_, v) => v && setHistMetric(v)}>
+                  {Object.entries(HIST_METRICS).map(([k, m]) => (
+                    <ToggleButton key={k} value={k}>{m.label}</ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+                <ToggleButtonGroup size="small" exclusive value={histRange} onChange={(_, v) => v && setHistRange(v)}>
+                  <ToggleButton value="1h">1 giờ</ToggleButton>
+                  <ToggleButton value="6h">6 giờ</ToggleButton>
+                  <ToggleButton value="24h">24 giờ</ToggleButton>
+                </ToggleButtonGroup>
+              </Stack>
+            </Stack>
+            <Box sx={{ height: 300 }}>
+              {histLoading ? (
+                <Skeleton variant="rounded" height={280} />
+              ) : histRows.length === 0 ? (
+                <EmptyState dense icon={<TimelineIcon />} title="Chưa có dữ liệu lịch sử" description="Phòng này chưa có dữ liệu cảm biến trong khoảng thời gian đã chọn." />
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={histRows} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.mode === 'dark' ? 'rgba(148,163,184,0.15)' : '#eef2f7'} />
+                    <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} scale="time"
+                      tickFormatter={(t) => dayjs(t).format(histRange === '24h' ? 'DD/MM HH:mm' : 'HH:mm')}
+                      tick={{ fontSize: 11, fill: theme.palette.text.secondary }} />
+                    <YAxis tick={{ fontSize: 11, fill: theme.palette.text.secondary }} unit={HIST_METRICS[histMetric].unit} width={56} />
+                    <RTooltip
+                      labelFormatter={(t) => dayjs(t).format('DD/MM/YYYY HH:mm')}
+                      formatter={(v) => [`${Number(v).toFixed(1)} ${HIST_METRICS[histMetric].unit}`, HIST_METRICS[histMetric].label]}
+                      contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8 }} />
+                    {HIST_METRICS[histMetric].refs.map((r, i) => (
+                      <ReferenceLine key={i} y={r.y} stroke={r.color} strokeDasharray="4 4" label={r.label ? { value: r.label, fontSize: 10, fill: r.color, position: 'insideTopRight' } : undefined} />
+                    ))}
+                    <Line dataKey="v" name={HIST_METRICS[histMetric].label} stroke={HIST_METRICS[histMetric].color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Box>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Device control card (admin / teacher only) — command level 0–3 */}
       {canControl && (
@@ -327,8 +463,11 @@ export default function Sensors() {
             <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
               <Box>
                 <Typography variant="h6">Điều khiển thiết bị</Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" display="block">
                   Chọn mức 0–3 (0 = tắt; quạt: 1–3 là tốc độ) → gửi lệnh MQTT tới thiết bị
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Tự động tắt đèn/quạt khi phòng không có tiết (theo thời khóa biểu).
                 </Typography>
               </Box>
               <TextField
@@ -440,59 +579,74 @@ export default function Sensors() {
               }
               dense
             />
-          ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Tên thiết bị</TableCell>
-                    <TableCell>Mã</TableCell>
-                    <TableCell>Loại</TableCell>
-                    <TableCell>Vị trí</TableCell>
-                    <TableCell>Trạng thái</TableCell>
-                    <TableCell>Cập nhật</TableCell>
-                    {isAdmin && <TableCell align="right">Thao tác</TableCell>}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {devices.map((d) => {
-                    const active = String(d.status || '').toLowerCase() === 'active'
-                    return (
-                      <TableRow key={d.device_id} hover>
-                        <TableCell>{d.device_name || '--'}</TableCell>
-                        <TableCell>{d.device_id}</TableCell>
-                        <TableCell>{d.device_type || '--'}</TableCell>
-                        <TableCell>{d.location || '--'}</TableCell>
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            label={d.status || '--'}
-                            color={active ? 'success' : 'default'}
-                            variant={active ? 'filled' : 'outlined'}
-                          />
-                        </TableCell>
-                        <TableCell>{fmtTs(d.timestamp)}</TableCell>
-                        {isAdmin && (
-                          <TableCell align="right">
-                            <Tooltip title="Sửa">
-                              <IconButton size="small" onClick={() => openEdit(d)}>
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Xoá">
-                              <IconButton size="small" color="error" onClick={() => handleDelete(d)}>
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
+          ) : (() => {
+            // Group devices by room (location field, fallback to device_id prefix)
+            const grouped = {}
+            devices.forEach((d) => {
+              const loc = d.location || (d.device_id || '').split('-')[0] || 'Khác'
+              if (!grouped[loc]) grouped[loc] = []
+              grouped[loc].push(d)
+            })
+            const sortedRooms = Object.keys(grouped).sort()
+            return (
+              <Stack spacing={2}>
+                {sortedRooms.map((loc) => (
+                  <Box key={loc}>
+                    <Stack direction="row" alignItems="center" spacing={1} mb={0.5}>
+                      <Typography variant="subtitle2" fontWeight={700} color="primary">{loc}</Typography>
+                      <Chip size="small" label={`${grouped[loc].length} thiết bị`} variant="outlined" />
+                    </Stack>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Tên thiết bị</TableCell>
+                            <TableCell>Mã</TableCell>
+                            <TableCell>Loại</TableCell>
+                            <TableCell>Trạng thái</TableCell>
+                            <TableCell>Cập nhật</TableCell>
+                            {isAdmin && <TableCell align="right">Thao tác</TableCell>}
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {grouped[loc].map((d) => {
+                            const active = String(d.status || '').toLowerCase() === 'active'
+                            return (
+                              <TableRow key={d.device_id} hover>
+                                <TableCell>{d.device_name || '--'}</TableCell>
+                                <TableCell>{d.device_id}</TableCell>
+                                <TableCell>{d.device_type || '--'}</TableCell>
+                                <TableCell>
+                                  <Chip size="small" label={d.status || '--'}
+                                    color={active ? 'success' : 'default'}
+                                    variant={active ? 'filled' : 'outlined'} />
+                                </TableCell>
+                                <TableCell>{fmtTs(d.timestamp)}</TableCell>
+                                {isAdmin && (
+                                  <TableCell align="right">
+                                    <Tooltip title="Sửa">
+                                      <IconButton size="small" onClick={() => openEdit(d)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Xoá">
+                                      <IconButton size="small" color="error" onClick={() => handleDelete(d)}>
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </TableCell>
+                                )}
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                ))}
+              </Stack>
+            )
+          })()}
         </CardContent>
       </Card>
 

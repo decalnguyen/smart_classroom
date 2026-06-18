@@ -44,12 +44,20 @@ export const statsApi = {
 // ---- Attendance reports / analytics ----
 export const reportApi = {
   attendance: (params) => client.get('/reports/attendance', { params }),
-  exportCsv: async (params) => {
+  // Export the (role-scoped) attendance report. opts: {from, to, detail, format}.
+  // format 'xlsx' = Excel workbook; otherwise CSV (UTF-8 BOM). detail = per-student.
+  exportReport: async ({ from, to, detail = false, format = 'csv' } = {}) => {
+    const params = { format }
+    if (from) params.from = from
+    if (to) params.to = to
+    if (detail) params.detail = 1
     const res = await client.get('/reports/attendance/export', { params, responseType: 'blob' })
     const url = URL.createObjectURL(res.data)
     const a = document.createElement('a')
     a.href = url
-    a.download = `diem_danh_${params?.date || 'report'}.csv`
+    const ext = format === 'xlsx' ? 'xlsx' : 'csv'
+    const range = to && to !== from ? `${from}_${to}` : from || 'report'
+    a.download = `diem_danh_${range}${detail ? '_chitiet' : ''}.${ext}`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -79,6 +87,21 @@ export const holidayApi = {
   list: () => client.get('/holidays'),
   create: (date, name) => client.post('/holidays', { date, name }),
   remove: (id) => client.delete(`/holidays/${id}`),
+}
+
+// ---- Makeup sessions / buổi bù (admin) ----
+export const makeupApi = {
+  list: () => client.get('/makeups'),
+  create: (body) => client.post('/makeups', body), // {class_id, date, start_min, end_min, note}
+  remove: (id) => client.delete(`/makeups/${id}`),
+}
+
+// ---- Classes & enrollment / ghi danh lớp (admin) ----
+export const classApi = {
+  listClasses: () => client.get('/classes'),
+  getRoster: (classId) => client.get(`/classes/${classId}/students`),
+  enrollStudent: (classId, student_id) => client.post(`/classes/${classId}/students`, { student_id }),
+  unenrollStudent: (classId, studentId) => client.delete(`/classes/${classId}/students/${studentId}`),
 }
 
 // ---- Face-recognition review queue (staff) ----

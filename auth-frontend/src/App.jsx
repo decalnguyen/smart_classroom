@@ -54,7 +54,14 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route path="/my-attendance" element={<MyAttendance />} />
+          <Route
+            path="/my-attendance"
+            element={
+              <ProtectedRoute roles={['student']}>
+                <MyAttendance />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/leaves" element={<Leaves />} />

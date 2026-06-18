@@ -121,7 +121,10 @@ A: Middleware `RequireDevice()` kiểm tra `X-Device-Key` so với `DEVICE_API_K
 A: Không. Bật plugin `rabbitmq_mqtt` (cổng 1883) **trên chính RabbitMQ**, ánh xạ topic MQTT `/A101/temp/value` → routing key AMQP `.A101.temp.value` trên `main_exchange`. `mqtt_bridge` bind `#.value`, lưu DB + republish `sensor.data` + chạy `EvaluateAndAlert`. Lệnh đi chiều ngược: `.room.device.cmd` → `/room/device/cmd`.
 
 **Q: Cảnh báo cháy nổ hoạt động end‑to‑end?**
-A: `EvaluateAndAlert()` so ngưỡng (khói 300, nhiệt 50, cấu hình env); vượt → tạo thông báo broadcast (`account_id='ALL'`) lên `notify.data` + `triggerBuzzer()` publish `/<room>/buzzer/cmd`; WS `/ws/notifications` đẩy tức thời; **cooldown 30s/thiết bị** chống spam. (Đã verify: khói 777 → nhận lệnh còi.)
+A: `EvaluateAndAlert()` so ngưỡng; vượt → tạo thông báo broadcast (`account_id='ALL'`) lên `notify.data` + `triggerBuzzer()` publish `/<room>/buzzer/cmd`; WS `/ws/notifications` đẩy tức thời; **cooldown 30s/thiết bị** chống spam. (Đã verify: khói 205 → nhận lệnh còi.)
+
+**Q: Vì sao ngưỡng báo còi là con số đó — có phải chọn tùy ý?**
+A: **Không tùy ý — ngưỡng được thiết kế theo dữ liệu thu thập.** Tôi phân tích phân bố ~5,1·10⁵ mẫu và đặt ngưỡng theo quy tắc phát hiện bất thường **T = μ + K·σ** (`threshold_calibration.go`): khói μ=104, σ=15,6 → **K=5 ⇒ T≈182**; nhiệt μ=27,6, σ=1,5 → **K=8 ⇒ T≈40**. Khói bình thường *chưa từng* vượt 138, nên ngưỡng cũ 300 sẽ **bỏ sót** đám cháy âm ỉ ở 180–250; T=182 cao hơn max quan sát >30% ⇒ **báo giả ≈ 0** (5σ ≈ 1/3,5 triệu mẫu) mà vẫn bắt sớm. Giá trị bị **kẹp [floor, ceiling]** (ceiling = mức nguy hiểm tuyệt đối luôn báo) và **tự hiệu chỉnh** mỗi giờ; loại mẫu ≥ ceiling khi tính baseline để sự cố quá khứ không "nhiễm" ngưỡng. *(Verify: khói=205 → còi kêu "ngưỡng 182"; khói=175 → không báo.)* Khớp **hướng phát triển Ch5.3** (thay ngưỡng cố định bằng ngưỡng học từ dữ liệu).
 
 ### LO4.3 — Đánh giá
 **Q: Độ chính xác nhận diện đo thế nào, bao nhiêu?**
@@ -165,4 +168,46 @@ A: Module AI (InsightFace+FAISS) là **thật** và đã đánh giá (Ch 4.6 + n
 
 ---
 
-*Tài liệu liên quan: [README.md](../README.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [ENROLLMENT.md](ENROLLMENT.md) · [JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md). Ảnh minh hoạ: `docs/screenshots/`.*
+## 8. Kịch bản phản biện theo sơ đồ use-case (bảo vệ từng "logic")
+
+> Cách phản biện: với mỗi use-case, hội đồng thường hỏi **"logic nghiệp vụ phía sau là gì, có thật không?"**. Phần này gắn mỗi use-case với **quy tắc nghiệp vụ + nơi hiện thực (file) + cách demo + câu trả lời "bẫy"**. Trình bày theo thứ tự actor như trong sơ đồ.
+
+### 8.1. Kịch bản demo 6 phút (theo actor)
+1. **Đăng nhập 3 vai trò** (admin/teacher/student) — cho thấy menu & dữ liệu khác nhau theo quyền.
+2. **Sinh viên**: mở "Lịch học" (lịch theo lớp đăng ký), "Điểm danh của tôi", "Xin nghỉ phép" → tạo đơn.
+3. **Giáo viên**: "Lịch dạy" (lịch các lớp mình dạy), "Cảm biến" — chỉ thấy **phòng mình dạy** và **đúng khung giờ**; "Điểm danh" lớp đang diễn ra → sửa 1 trạng thái; duyệt đơn nghỉ của SV → SV thành "Có phép".
+4. **Cảnh báo cháy**: publish khói 205 vào phòng → còi kêu + thông báo broadcast (ngưỡng data-driven 182).
+5. **Quản trị**: phân công GV↔phòng, ghi danh lớp, buổi bù, đăng ký khuôn mặt (ảnh), báo cáo + **xuất Excel (Từ–Đến, chi tiết SV)**, nhật ký kiểm toán.
+
+### 8.2. Logic từng use-case + câu hỏi phản biện
+
+| Use-case (actor) | Quy tắc nghiệp vụ & nơi hiện thực | Câu hỏi phản biện điển hình → trả lời |
+|---|---|---|
+| **Đăng nhập/Đăng xuất** (mọi vai trò) | JWT HS256 + cookie HttpOnly, `RequireRole`, bcrypt, rate-limit `/login`,`/signup` (`auth_handler.go`, `middleware/`). | *"Phân quyền là thật?"* → Live: teacher gọi `/audit`→403, student gọi `/reports`→403, không token→401. |
+| **Giám sát cảm biến realtime** + **phạm vi xem theo phòng & khung giờ** (GV/SV) | GV chỉ thấy **phòng mình dạy** theo **khung giờ tiết** dạy; SV theo lớp học. `actorRoomScope` (`room_scope.go`) lọc registry/overview; history bị **clamp theo khung giờ** + 403 nếu ngoài phòng. WS `useSensorStream`. | *"GV xem được phòng người khác không?"* → Không, `/sensor/A104-temp` của GV không dạy A104 → **403** (đã verify). *"Theo thời gian ra sao?"* → đọc lịch sử chỉ trả các mẫu nằm trong khung giờ tiết; overview có cờ `in_session`. |
+| **Phân công GV ↔ phòng** (admin) | `ClassroomTeacher` CRUD + tab "Phân công GV". Phân biệt **"phòng phụ trách"** (oversight, dùng cho báo cáo) ≠ **"phòng có tiết dạy"** (`classes.teacher_id`, dùng cho lịch/cảm biến). | *"Hai khái niệm phòng có mâu thuẫn?"* → Có chủ đích: báo cáo theo phòng phụ trách; xem cảm biến/lịch theo phòng thực dạy. |
+| **Quản lý thiết bị/cảm biến** (admin) | Registry `/sensorinf` CRUD; `device_type` chuẩn hoá 1 từ vựng (`canonicalType`), heartbeat đồng bộ `sensors`↔telemetry (xem [DATA_MODEL.md](DATA_MODEL.md)). | *"Vì sao đèn/nhiệt từng hiển thị 0?"* → do lệch `temp`/`temperature`; đã chuẩn hoá tại ingest, dashboard 10/10 phòng có số. |
+| **Quản lý học vụ (ngày nghỉ, buổi bù)** (admin) | `/holidays`,`/makeups` CRUD + tab UI. `findOngoingClass` (`academic.go`) **bỏ điểm danh ngày nghỉ** và **ưu tiên buổi bù**. | *"Buổi bù ảnh hưởng điểm danh thế nào?"* → trong khung giờ buổi bù, hệ coi như có tiết → mở điểm danh đúng lớp; ngày lễ thì không auto-vắng. |
+| **Ghi danh khuôn mặt & lớp học** (admin) | Khuôn mặt: `/enrollment/face/photo`→`face-enroll`→pgvector (đa vector/SV). Lớp: tab "Ghi danh lớp" + `enroll/unenroll` với **kiểm tra sĩ số** (`HandleEnrollStudent`). | *"Quá sĩ số thì sao?"* → trả **409** "Lớp đã đầy". *"Khuôn mặt lưu ở đâu?"* → `face_embeddings` (pgvector 512-d), không phải model GORM chết. |
+| **Xem nhật ký kiểm toán** (admin) | `audit_logs` + `writeAudit(...)` ở mọi CRUD danh mục + sửa/xoá điểm danh + ghi danh + buổi bù. | *"Có truy vết người thao tác?"* → mỗi ghi có actor + entity + thời điểm; demo tạo/xoá → xuất hiện ngay. |
+| **Quản lý danh mục** (admin) | CRUD tòa nhà/phòng/SV/GV (`Admin.jsx` CrudTable). | *"Ràng buộc dữ liệu?"* → validate bắt buộc; xung đột trùng → 409 (vd thiết bị). |
+| **Duyệt nghỉ phép & nhận diện** (admin/GV) | Đơn nghỉ duyệt → trạng thái điểm danh **excused** (suy ra, không tạo row trùng). Hàng đợi nhận diện độ tin cậy thấp (0.45–0.60) → `confirm/reject`. | *"Vì sao có hàng đợi duyệt?"* → ngưỡng kép: ≥0.60 tự ghi, 0.45–0.60 chờ người duyệt, <0.45 bỏ — tránh điểm danh sai. |
+| **Điều khiển thiết bị (đèn/quạt)** (admin/GV) | `POST /device/:type/:id/mode` (0–3) → lệnh **desired-state** MQTT `/<room>/<device>/cmd`; `ScheduleAutoControl` tự tắt đèn/quạt khi **hết tiết theo TKB**. | *"Lệnh có xuống thiết bị thật?"* → publish topic cmd, ESP32 subscribe; đã verify nhận lệnh. *"Còi chỉ 0/1, quạt 0–3?"* → đúng, UI giới hạn mức theo loại. |
+| **Điểm danh & quản lý điểm danh** (admin/GV) | Máy trạng thái **present/late/excused/absent**; `late` theo grace; **dedup** 1 dòng/(SV,lớp,ngày) (unique index); `AutoAbsentChecker` đóng tiết → vắng; sửa/xoá có **guard phạm vi GV**. | *"Điểm danh 2 lần?"* → unique index chặn. *"SV không quét thì sao?"* → sau khi tiết kết thúc, auto đánh **Vắng** (trừ có phép). *"GV sửa lớp người khác?"* → 403. |
+| **Xem báo cáo điểm danh** (admin/GV) | Phân tích theo lớp + xu hướng; **scoped** (GV = lớp phụ trách). Tỉ lệ = (có mặt+đi muộn)/(sĩ số − có phép). **Export CSV/Excel** theo **khoảng Từ–Đến** + **chi tiết từng SV**. | *"Export làm được gì?"* → chọn khoảng ngày, chi tiết SV, định dạng CSV(BOM)/`.xlsx` thật (đã verify file Excel hợp lệ). |
+| **Quản lý lịch học** (mọi vai trò) | SV: lịch suy từ lớp đăng ký; **GV: "Lịch dạy"** suy từ `classes.teacher_id`; + mục cá nhân tự thêm/sửa/xoá (`editable`). | *"Sao GV lại là 'Lịch học'?"* → đã sửa: GV thấy **"Lịch dạy"** (các lớp mình dạy); mục cá nhân vẫn sửa/xoá được. |
+| **Nhận thông báo/cảnh báo** (mọi vai trò) | `/notifications` + WS `/ws/notifications`; cảnh báo an toàn broadcast `account_id='ALL'`. | *"Realtime hay polling?"* → WebSocket đẩy tức thời; cảnh báo cháy hiện cho mọi người đang online. |
+| **Xem điểm danh cá nhân** (SV) | `/my/attendance` — chỉ dữ liệu của chính SV, ẩn liên hệ người khác. | *"SV xem được của bạn khác?"* → không, scope theo `account_id`. |
+| **Xin nghỉ phép** (SV) | `POST /leaves`; admin/GV duyệt → ngày đó tính **Có phép**, không bị auto-vắng. | *"Nghỉ phép có tự trừ điểm danh?"* → duyệt xong, `AutoAbsentChecker` loại SV có phép khỏi danh sách vắng. |
+| **Gửi dữ liệu cảm biến** (ESP32) | MQTT `/<room>/<device>/value` → `ingestDeviceValue`→`saveReading` (chuẩn hoá type) → DB + publish WS. Bind `#.value` nên thêm phòng không cần cấu hình. | *"Thêm phòng mới có phải sửa server?"* → không, binding `#.value` tự nhận. |
+| **Cảnh báo an toàn tự động** (ESP32) | `EvaluateAndAlert` dùng **ngưỡng data-driven μ+Kσ** tự hiệu chỉnh (khói 182, nhiệt 40), kẹp [floor, ceiling]; còi + broadcast; ESP32 có **trip cục bộ** độc lập mạng. | *"Ngưỡng 300 ở đâu ra?"* → không tùy ý: suy từ phân bố ~5·10⁵ mẫu (μ+5σ≈182), bắt cháy âm ỉ mà 300 bỏ sót, báo giả ≈0. (xem §5 Q&A) |
+| **Gửi sự kiện nhận diện** (Camera AI) | `POST /attendance/scan` (xác thực `X-Device-Key`) → pgvector **kNN k=5 weighted vote**, **T_high=0.60/T_low=0.45** → ghi điểm danh / vào hàng đợi duyệt / bỏ. | *"Nhận diện chạy ở đâu?"* → server-side pgvector (cùng mô hình `buffalo_l`); Jetson là scaffold FAISS cho edge. |
+
+### 8.3. 3 câu hỏi "khó" nên chuẩn bị kỹ
+1. **"Phân quyền có chặn ở backend hay chỉ ẩn menu?"** → Chặn ở backend (middleware + scope theo phòng/khung giờ); ẩn menu chỉ là UX. Demo 403 trực tiếp bằng `curl`/DevTools.
+2. **"Số liệu nhận diện trong báo cáo (2 SV/100%) vs dữ liệu repo (16 nhãn)?"** → Xem **rủi ro #1 (§6)** — trả lời trung thực theo đúng phạm vi báo cáo, đã có kế hoạch thống nhất dữ liệu.
+3. **"Phần nào là thật, phần nào mô phỏng?"** → Server/web/CSDL/MQTT/báo cáo/điểm danh: **thật, đã chạy**. Thiết bị ESP32 + camera edge: simulator + scaffold (đúng phạm vi đồ án); `DEMO_FALLBACK` sinh dữ liệu cho phòng thật khi chưa cắm phần cứng và **tự nhường** khi có thiết bị thật.
+
+---
+
+*Tài liệu liên quan: [README.md](../README.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATA_MODEL.md](DATA_MODEL.md) · [ENROLLMENT.md](ENROLLMENT.md) · [JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md). Ảnh minh hoạ: `docs/screenshots/`.*

@@ -34,9 +34,10 @@ function playAlarmBeep() {
 }
 
 export function RealtimeProvider({ children }) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const [notifications, setNotifications] = useState([])
   const [activeAlert, setActiveAlert] = useState(null)
+  const [latestNotif, setLatestNotif] = useState(null)
   const seen = useRef(new Set())
 
   const refresh = useCallback(async () => {
@@ -57,14 +58,21 @@ export function RealtimeProvider({ children }) {
 
   const handleMessage = useCallback((msg) => {
     if (!msg || typeof msg !== 'object') return
+    // The WS server broadcasts to all clients (it has no identity), so filter
+    // here: a targeted notification (account_id != ALL) is only for its recipient.
+    const myId = user?.account_id
+    if (msg.account_id && msg.account_id !== 'ALL' && msg.account_id !== myId) return
     if (msg.id && seen.current.has(msg.id)) return
     if (msg.id) seen.current.add(msg.id)
     setNotifications((prev) => [msg, ...prev].slice(0, 200))
     if (msg.title === 'alert') {
       setActiveAlert(msg)
       playAlarmBeep()
+    } else {
+      // Show a global toast for all other notifications (leave requests, etc.)
+      setLatestNotif(msg)
     }
-  }, [])
+  }, [user?.account_id])
 
   // Only open the notification socket when authenticated.
   const wsUrl = isAuthenticated ? `${WS_BASE_URL}/ws/notifications` : null
@@ -73,6 +81,7 @@ export function RealtimeProvider({ children }) {
   const unreadCount = notifications.filter((n) => !n.is_read).length
 
   const dismissAlert = useCallback(() => setActiveAlert(null), [])
+  const dismissNotif = useCallback(() => setLatestNotif(null), [])
 
   const markRead = useCallback(async (id) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)))
@@ -88,6 +97,8 @@ export function RealtimeProvider({ children }) {
     unreadCount,
     activeAlert,
     dismissAlert,
+    latestNotif,
+    dismissNotif,
     markRead,
     refresh,
     wsStatus: status,

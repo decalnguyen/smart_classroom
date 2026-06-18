@@ -26,6 +26,7 @@ type AttendanceEvent struct {
 	Date        string  `json:"date"`
 	DeviceID    string  `json:"device_id"`
 	Confidence  float64 `json:"confidence,omitempty"`
+	FaceImage   string  `json:"face_image,omitempty"` // base64 JPEG — RELAYED live to the web, not stored
 }
 
 // HandleAttendanceScan simulates the edge AI camera reporting a recognized face.
@@ -40,10 +41,14 @@ func HandleAttendanceScan(c *gin.Context) {
 	var req struct {
 		ClassroomID uint      `json:"classroom_id"`
 		StudentID   uint      `json:"student_id"`
+		MSSV        string    `json:"mssv"`        // edge: FAISS local match result
+		Confidence  float64   `json:"confidence"`  // edge: cosine similarity score
 		DeviceID    string    `json:"device_id"`
 		Status      string    `json:"status"`     // present | late (default present)
 		Embedding   []float64 `json:"embedding"`  // optional ArcFace 512-d from the edge
-		EventID     string    `json:"event_id"`   // optional edge-side idempotency key
+		EventID     string    `json:"event_id"`   // edge-side idempotency key (required)
+		Ts          string    `json:"ts"`         // event time (RFC3339/epoch) for anti-replay
+		FaceImage   string    `json:"face_image"` // edge: base64 JPEG of the cropped face (relayed live, not stored)
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
@@ -51,6 +56,18 @@ func HandleAttendanceScan(c *gin.Context) {
 	}
 	if req.ClassroomID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "classroom_id is required"})
+		return
+	}
+	// Anti-replay: require a fresh ts + unique event_id (idempotent on retry).
+	switch verifyDeviceEvent(req.EventID, req.Ts, true) {
+	case eventBadTS:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Thiếu/sai 'ts' hoặc 'event_id' (bắt buộc để chống phát lại)"})
+		return
+	case eventStale:
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Sự kiện quá hạn (lệch thời gian) — có thể bị phát lại"})
+		return
+	case eventDuplicate:
+		c.JSON(http.StatusOK, gin.H{"message": "Đã xử lý trước đó (trùng event_id)", "idempotent": true})
 		return
 	}
 	if req.DeviceID == "" {
@@ -71,11 +88,42 @@ func HandleAttendanceScan(c *gin.Context) {
 		status = models.StatusLate
 	}
 
+	confidence := 1.0
+
+	// Edge FAISS path: camera resolved MSSV locally, just look up the student.
+	if req.MSSV != "" && req.StudentID == 0 {
+		var st models.Student
+		if err := db.DB.Where("mssv = ?", req.MSSV).First(&st).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":  "Không tìm thấy sinh viên với MSSV " + req.MSSV + " trong hệ thống",
+				"code":   "student_not_found",
+				"mssv":   req.MSSV,
+			})
+			return
+		}
+		// Must be enrolled in the class currently in session in this room.
+		var enrolledCount int64
+		db.DB.Model(&models.ClassStudent{}).
+			Where("class_id = ? AND student_id = ?", class.ClassID, st.StudentID).
+			Count(&enrolledCount)
+		if enrolledCount == 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":        fmt.Sprintf("Sinh viên %s (%s) không thuộc lớp %s đang học tại phòng này", st.StudentName, req.MSSV, class.Subject),
+				"code":         "not_enrolled",
+				"mssv":         req.MSSV,
+				"student_name": st.StudentName,
+				"subject":      class.Subject,
+			})
+			return
+		}
+		req.StudentID = st.StudentID
+		confidence = req.Confidence
+	}
+
 	// Edge recognition path: when the camera sends a 512-d embedding, match it
 	// against the classroom gallery (pgvector cosine) and apply confidence gating:
 	//   sim >= T_high → accept (auto-mark); T_low <= sim < T_high → human review;
 	//   sim < T_low   → unknown face (ignored).
-	confidence := 1.0
 	if len(req.Embedding) == 512 {
 		sid, mssv, name, sim, matched := recognizeByEmbedding(req.ClassroomID, req.Embedding)
 		if !matched {
@@ -162,7 +210,14 @@ func HandleAttendanceScan(c *gin.Context) {
 		if existing.AttendanceStatus != status {
 			db.DB.Model(&existing).Update("attendance_status", status)
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Học sinh đã được điểm danh trước đó", "student_id": student.StudentID})
+		c.JSON(http.StatusOK, gin.H{
+			"message":           fmt.Sprintf("%s (%s) đã điểm danh trước đó lúc %s", student.StudentName, student.MSSV, existing.DetectionTime),
+			"code":              "already_present",
+			"student_id":        student.StudentID,
+			"mssv":              student.MSSV,
+			"student_name":      student.StudentName,
+			"attendance_status": existing.AttendanceStatus,
+		})
 		return
 	}
 
@@ -196,6 +251,7 @@ func HandleAttendanceScan(c *gin.Context) {
 		Date:        att.Date,
 		DeviceID:    req.DeviceID,
 		Confidence:  confidence,
+		FaceImage:   req.FaceImage, // pass-through: shown live on the web, never persisted
 	}
 	rabbitmq.Publish("attendance.event", event)
 
@@ -213,5 +269,17 @@ func HandleAttendanceScan(c *gin.Context) {
 		rabbitmq.Publish("notify.data", notif)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Face recognized", "event": event})
+	statusLabel := "Điểm danh thành công"
+	if status == models.StatusLate {
+		statusLabel = "Điểm danh thành công (đi muộn)"
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":           fmt.Sprintf("%s: %s (%s) — môn %s", statusLabel, student.StudentName, student.MSSV, class.Subject),
+		"code":              "success",
+		"student_id":        student.StudentID,
+		"mssv":              student.MSSV,
+		"student_name":      student.StudentName,
+		"attendance_status": status,
+		"event":             event,
+	})
 }

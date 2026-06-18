@@ -338,6 +338,48 @@ func HandleGetSchedules(c *gin.Context) {
 		"Friday": {}, "Saturday": {}, "Sunday": {},
 	}
 
+	// For an admin, show the ROOM-USAGE timetable: every classroom's weekly
+	// schedule (môn / tiết / phòng / GV) so they see how rooms are used. This is
+	// the institution-wide view, not a personal one.
+	if c.GetString("role") == "admin" {
+		var classes []models.Class
+		db.DB.Order("start_min asc").Find(&classes)
+		rooms := map[uint]string{}
+		var crs []models.Classroom
+		db.DB.Find(&crs)
+		for _, r := range crs {
+			rooms[r.ClassroomID] = r.ClassroomName
+		}
+		teachers := map[uint]string{}
+		var ts []models.Teacher
+		db.DB.Find(&ts)
+		for _, t := range ts {
+			teachers[t.TeacherID] = t.TeacherName
+		}
+		for _, cl := range classes {
+			if _, ok := weekly[cl.DayOfWeek]; !ok {
+				continue
+			}
+			// Skip synthetic all-day classes (e.g. the demo class) — not a real period.
+			if cl.EndMin-cl.StartMin >= 600 {
+				continue
+			}
+			desc := fmt.Sprintf("Tiết %d", cl.Period)
+			if tn := teachers[cl.TeacherID]; tn != "" {
+				desc += " · " + tn
+			}
+			weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
+				"time":     fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
+				"title":    cl.Subject,
+				"room":     rooms[cl.ClassroomID],
+				"desc":     desc,
+				"editable": false, // managed via the Quản trị (classes) page
+			})
+		}
+		c.JSON(http.StatusOK, weekly)
+		return
+	}
+
 	// For a linked student, derive the timetable from real class enrollment.
 	if c.GetString("role") == "student" {
 		var student models.Student
@@ -356,10 +398,38 @@ func HandleGetSchedules(c *gin.Context) {
 					continue
 				}
 				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
-					"time":  fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
-					"title": cl.Subject,
-					"room":  rooms[cl.ClassroomID],
-					"desc":  fmt.Sprintf("Tiết %d", cl.Period),
+					"time":     fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
+					"title":    cl.Subject,
+					"room":     rooms[cl.ClassroomID],
+					"desc":     fmt.Sprintf("Tiết %d", cl.Period),
+					"editable": false, // class-derived: read-only (managed via timetable)
+				})
+			}
+		}
+	}
+
+	// For a teacher, derive the weekly TEACHING timetable from the classes they teach.
+	if c.GetString("role") == "teacher" {
+		var teacher models.Teacher
+		if err := db.DB.Where("account_id = ?", accountID).First(&teacher).Error; err == nil {
+			var classes []models.Class
+			db.DB.Where("teacher_id = ?", teacher.TeacherID).Find(&classes)
+			rooms := map[uint]string{}
+			var crs []models.Classroom
+			db.DB.Find(&crs)
+			for _, r := range crs {
+				rooms[r.ClassroomID] = r.ClassroomName
+			}
+			for _, cl := range classes {
+				if _, ok := weekly[cl.DayOfWeek]; !ok {
+					continue
+				}
+				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
+					"time":     fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
+					"title":    cl.Subject,
+					"room":     rooms[cl.ClassroomID],
+					"desc":     fmt.Sprintf("Tiết %d", cl.Period),
+					"editable": false, // teaching schedule is managed via the timetable
 				})
 			}
 		}
@@ -370,7 +440,9 @@ func HandleGetSchedules(c *gin.Context) {
 	db.DB.Where("account_id = ?", accountID).Find(&schedules)
 	for _, s := range schedules {
 		if _, ok := weekly[s.Day]; ok {
-			weekly[s.Day] = append(weekly[s.Day], gin.H{"time": s.Time, "title": s.Title, "desc": s.Desc, "room": s.Room})
+			weekly[s.Day] = append(weekly[s.Day], gin.H{
+				"id": s.ID, "time": s.Time, "title": s.Title, "desc": s.Desc, "room": s.Room, "editable": true,
+			})
 		}
 	}
 
@@ -468,29 +540,42 @@ func HandleGetAttendance(c *gin.Context) {
 	}
 	today := nowVN().Format("2006-01-02")
 
+	// Distinct enrolled student IDs first, then load them — so a student appears
+	// exactly once even if the join table has stray duplicate rows.
+	var enrolledIDs []uint
+	db.DB.Model(&models.ClassStudent{}).
+		Where("class_id = ?", class.ClassID).
+		Distinct("student_id").
+		Pluck("student_id", &enrolledIDs)
 	var enrolledStudents []models.Student
-	if err := db.DB.
-		Joins("JOIN class_students ON students.student_id = class_students.student_id").
-		Where("class_students.class_id = ?", class.ClassID).
-		Find(&enrolledStudents).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get enrolled students"})
-		return
+	if len(enrolledIDs) > 0 {
+		if err := db.DB.Where("student_id IN ?", enrolledIDs).
+			Order("student_name asc").
+			Find(&enrolledStudents).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get enrolled students"})
+			return
+		}
 	}
 
 	// Status of each enrolled student in THIS period today (present/late).
 	type attRow struct {
+		ID               *string
 		StudentID        uint
 		AttendanceStatus string
 	}
 	var attRows []attRow
-	db.DB.Model(&models.Attendance{}).Select("student_id, attendance_status").
+	db.DB.Model(&models.Attendance{}).Select("id, student_id, attendance_status").
 		Where("class_id = ? AND date = ?", class.ClassID, today).Scan(&attRows)
 	statusMap := map[uint]string{}
+	idMap := map[uint]string{} // record id of the row whose status we keep -> enables edit/delete
 	for _, r := range attRows {
 		if statusMap[r.StudentID] == models.StatusPresent {
 			continue
 		}
 		statusMap[r.StudentID] = r.AttendanceStatus
+		if r.ID != nil {
+			idMap[r.StudentID] = *r.ID
+		}
 	}
 	// Approved leave today -> excused.
 	var leaveIDs []uint
@@ -513,13 +598,22 @@ func HandleGetAttendance(c *gin.Context) {
 			}
 		}
 		row := gin.H{"student_id": student.StudentID, "mssv": student.MSSV, "student_name": student.StudentName, "status": status}
+		if aid, ok := idMap[student.StudentID]; ok {
+			row["id"] = aid // present only when a real record exists -> UI shows edit/delete
+		}
 		if includeContact {
 			row["phone"] = student.Phone
 			row["email"] = student.Email
 		}
 		results = append(results, row)
 	}
-	c.JSON(http.StatusOK, gin.H{"class": gin.H{"period": class.Period, "subject": class.Subject}, "students": results})
+	c.JSON(http.StatusOK, gin.H{"class": gin.H{
+		"period":    class.Period,
+		"subject":   class.Subject,
+		"start_min": class.StartMin,
+		"end_min":   class.EndMin,
+		"time":      fmt.Sprintf("%02d:%02d–%02d:%02d", class.StartMin/60, class.StartMin%60, class.EndMin/60, class.EndMin%60),
+	}, "students": results})
 }
 func HandlePostAttendance(c *gin.Context) {
 	var attendance models.Attendance
@@ -537,6 +631,15 @@ func HandlePostAttendance(c *gin.Context) {
 	var student models.Student
 	if err := db.DB.Where("student_id = ?", attendance.StudentID).First(&student).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Student not found"})
+		return
+	}
+	// May only mark students enrolled in the class currently in session in this room.
+	var enrolledCount int64
+	db.DB.Model(&models.ClassStudent{}).
+		Where("class_id = ? AND student_id = ?", class.ClassID, student.StudentID).
+		Count(&enrolledCount)
+	if enrolledCount == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Sinh viên %s không thuộc lớp %s đang học tại phòng này", student.StudentName, class.Subject)})
 		return
 	}
 	now := nowVN()
@@ -590,6 +693,12 @@ func HandlePutAttendance(c *gin.Context) {
 		return
 	}
 
+	// A teacher may only edit records in classrooms assigned to them.
+	if !canManageClassroom(c, attendance.ClassroomID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không được phân công lớp này"})
+		return
+	}
+
 	// Parse the updated data
 	if err := c.BindJSON(&attendance); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
@@ -608,7 +717,17 @@ func HandlePutAttendance(c *gin.Context) {
 func HandleDeleteAttendance(c *gin.Context) {
 	id := c.Param("id")
 
-	// Delete the attendance record by ID
+	// Load first so we can scope the delete to a teacher's assigned classrooms.
+	var attendance models.Attendance
+	if err := db.DB.Where("id = ?", id).First(&attendance).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Attendance record not found"})
+		return
+	}
+	if !canManageClassroom(c, attendance.ClassroomID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không được phân công lớp này"})
+		return
+	}
+
 	if err := db.DB.Where("id = ?", id).Delete(&models.Attendance{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete attendance record"})
 		return
@@ -616,4 +735,14 @@ func HandleDeleteAttendance(c *gin.Context) {
 
 	writeAudit(c, "delete", "attendance", id, "xoá bản ghi điểm danh")
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance record deleted"})
+}
+
+// canManageClassroom returns true unless the caller is a teacher who is not
+// assigned to the given classroom (admins always pass).
+func canManageClassroom(c *gin.Context, classroomID uint) bool {
+	if c.GetString("role") != "teacher" {
+		return true
+	}
+	ids, _ := scopedClassroomIDs(c)
+	return containsUint(ids, classroomID)
 }

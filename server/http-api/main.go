@@ -30,9 +30,11 @@ func main() {
 	db.InitDB()
 	handlers.SeedDefaults()
 	handlers.SeedMockData()
+	handlers.SeedRealStudents()
 	handlers.SeedTeacherAssignments()
 	handlers.SeedAccountLinks()
 	handlers.SeedTodayAttendance()
+	handlers.SeedLeaveRequests()
 	handlers.SeedDeviceCredentials()
 	rabbitmq.Init()
 	handlers.StartMQTTBridge() // ingest MQTT sensor topics + device command acks
@@ -177,6 +179,10 @@ func main() {
 		admin.POST("/holidays", handlers.HandleCreateHoliday)
 		admin.DELETE("/holidays/:id", handlers.HandleDeleteHoliday)
 		admin.POST("/makeups", handlers.HandleCreateMakeup)
+		admin.GET("/makeups", handlers.HandleGetMakeups)
+		admin.DELETE("/makeups/:id", handlers.HandleDeleteMakeup)
+		admin.GET("/classes", handlers.HandleListClasses)
+		admin.GET("/classes/:id/students", handlers.HandleGetClassRoster)
 		admin.POST("/classes/:id/students", handlers.HandleEnrollStudent)
 		admin.DELETE("/classes/:id/students/:student_id", handlers.HandleUnenrollStudent)
 
@@ -187,9 +193,12 @@ func main() {
 	}
 
 	// Background workers.
+	handlers.CalibrateThresholds()       // data-driven alarm thresholds (μ+Kσ from collected data)
 	handlers.SensorChecker()
 	handlers.SensorRetentionChecker()    // prune old time-series rows
 	handlers.AutoAbsentChecker()         // auto-mark absent after each period ends
+	handlers.ScheduleAutoControl()       // timetable-based energy saving: auto-off devices when no class
+	handlers.DemoTelemetryFallback()     // uniform room coverage for demos; yields to real devices by freshness
 
 	port := os.Getenv("HTTP_PORT")
 	if port == "" {

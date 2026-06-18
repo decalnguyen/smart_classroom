@@ -11,13 +11,21 @@ fan/relay, light) and ACKs each one.
 | DHT22 data        | GPIO 4    |
 | LDR (analog)      | GPIO 34   |
 | MQ-x gas (analog) | GPIO 35   |
-| Buzzer            | GPIO 25   |
+| LED               | GPIO 2    |
 | Relay (fan/light) | GPIO 26   |
+| Buzzer            | GPIO 25   |
+| Button (manual + báo cháy) | GPIO 33 (INPUT_PULLUP) |
+| OLED SSD1306 (I2C) | SDA 21 / SCL 22 (addr 0x3C) |
 
 ## Build
 
 Arduino IDE → Boards Manager → **esp32** by Espressif. Install libraries:
-`PubSubClient`, `ArduinoJson`, `DHT sensor library` (+ `Adafruit Unified Sensor`).
+`PubSubClient`, `ArduinoJson`, `DHT sensor library` (+ `Adafruit Unified Sensor`),
+`Adafruit GFX Library`, `Adafruit SSD1306`.
+
+The sketch runs **local threshold control** (smoke/fire → buzzer; light → LED; temp → fan)
+on-device for instant, network-independent safety/energy; the server overrides via
+`/<room>/<device>/cmd` and auto-offs devices by timetable when no class is in session.
 
 Edit the config block at the top (`WIFI_*`, `MQTT_*`, `ROOM`, `DEVICE_ID`),
 flash, open the serial monitor at 115200.
@@ -52,8 +60,9 @@ lets it connect remotely. Change for production.
 ```bash
 # publish a temperature reading
 mosquitto_pub -h <host> -p 1883 -u admin -P admin -t /A101/temp/value -m '{"value":29.5}'
-# trigger the smoke alarm (>300) -> server publishes /A101/buzzer/cmd
-mosquitto_pub -h <host> -p 1883 -u admin -P admin -t /A101/smoke/value -m '{"value":777}'
+# trigger the smoke alarm: server threshold is data-driven (μ+5σ≈182, auto-calibrated)
+# so any value >~182 fires it -> server publishes /A101/buzzer/cmd
+mosquitto_pub -h <host> -p 1883 -u admin -P admin -t /A101/smoke/value -m '{"value":205}'
 # watch the command come back
 mosquitto_sub -h <host> -p 1883 -u admin -P admin -t '/A101/+/cmd' -v
 ```

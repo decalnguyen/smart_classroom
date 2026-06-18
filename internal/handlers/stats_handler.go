@@ -21,20 +21,47 @@ func HandleStatsOverview(c *gin.Context) {
 	var classrooms, students, teachers, sensorsTotal, sensorsActive int64
 	var alertsToday, sessionsToday int64
 
-	db.DB.Model(&models.Classroom{}).Count(&classrooms)
-	db.DB.Model(&models.Student{}).Count(&students)
-	db.DB.Model(&models.Teacher{}).Count(&teachers)
-	db.DB.Model(&models.Sensor{}).Count(&sensorsTotal)
-	db.DB.Model(&models.Sensor{}).Where("status = ?", "Active").Count(&sensorsActive)
+	// Scope the KPIs to the caller: admin = whole school; teacher = rooms they
+	// teach; student = rooms of enrolled classes. So a GV/SV dashboard reflects
+	// only their own context, not the entire institution.
+	roomSet, _, isAll := actorRoomScope(c)
+	var scopeIDs []uint
+	names := roomNames(roomSet)
+	if !isAll {
+		if len(roomSet) > 0 {
+			db.DB.Model(&models.Classroom{}).Where("classroom_name IN ?", names).Pluck("classroom_id", &scopeIDs)
+		}
+	}
+
+	if isAll {
+		db.DB.Model(&models.Classroom{}).Count(&classrooms)
+		db.DB.Model(&models.Student{}).Count(&students)
+		db.DB.Model(&models.Teacher{}).Count(&teachers)
+		db.DB.Model(&models.Sensor{}).Count(&sensorsTotal)
+		db.DB.Model(&models.Sensor{}).Where("lower(status) = ?", "active").Count(&sensorsActive)
+		db.DB.Model(&models.Class{}).Where("day_of_week = ?", weekday).Count(&sessionsToday)
+	} else if len(scopeIDs) > 0 {
+		classrooms = int64(len(scopeIDs))
+		db.DB.Table("class_students cs").Joins("JOIN classes c ON c.class_id = cs.class_id").
+			Where("c.classroom_id IN ?", scopeIDs).Distinct("cs.student_id").Count(&students)
+		db.DB.Model(&models.Class{}).Where("classroom_id IN ?", scopeIDs).Distinct("teacher_id").Count(&teachers)
+		db.DB.Model(&models.Sensor{}).Where("location IN ?", names).Count(&sensorsTotal)
+		db.DB.Model(&models.Sensor{}).Where("location IN ? AND lower(status) = ?", names, "active").Count(&sensorsActive)
+		db.DB.Model(&models.Class{}).Where("day_of_week = ? AND classroom_id IN ?", weekday, scopeIDs).Count(&sessionsToday)
+	}
+	// Safety alerts are system-wide (everyone should see them).
 	db.DB.Model(&models.Notification{}).Where("title = ? AND created_at >= ?", "alert", startOfDay).Count(&alertsToday)
-	db.DB.Model(&models.Class{}).Where("day_of_week = ?", weekday).Count(&sessionsToday)
 
 	// Attendance via the SHARED daily roll-up (student-level) so the dashboard
 	// always agrees with the reports page. "Có mặt"=present, "Đi muộn"=late,
 	// "Có phép"=excused, "Tỉ lệ tham gia"=(present+late)/(enrolled-excused).
-	var allIDs []uint
-	db.DB.Model(&models.Classroom{}).Pluck("classroom_id", &allIDs)
-	roll := dailyRollup(allIDs, today, weekday)
+	var rollIDs []uint
+	if isAll {
+		db.DB.Model(&models.Classroom{}).Pluck("classroom_id", &rollIDs)
+	} else {
+		rollIDs = scopeIDs
+	}
+	roll := dailyRollup(rollIDs, today, weekday)
 	present, late, excused, absent, enrolled := 0, 0, 0, 0, 0
 	for _, rd := range roll {
 		present += rd.Present

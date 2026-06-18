@@ -35,6 +35,7 @@ import { useRealtime } from '../context/RealtimeContext'
 import { useColorMode } from '../context/ColorModeContext'
 
 const roleLabel = { admin: 'Quản trị viên', teacher: 'Giáo viên', student: 'Học sinh' }
+const NOTIF_LABELS = { alert: 'Cảnh báo an toàn', leave: 'Đơn xin nghỉ', attendance: 'Điểm danh' }
 
 export default function Topbar({ onMenuClick }) {
   const navigate = useNavigate()
@@ -144,7 +145,7 @@ export default function Topbar({ onMenuClick }) {
                     {n.title === 'alert' ? <WarningAmberIcon color="error" fontSize="small" /> : <InfoOutlinedIcon color="info" fontSize="small" />}
                   </ListItemIcon>
                   <ListItemText
-                    primary={n.title === 'alert' ? 'Cảnh báo an toàn' : (n.title || 'Thông báo')}
+                    primary={NOTIF_LABELS[n.title] || n.title || 'Thông báo'}
                     secondary={n.message}
                     primaryTypographyProps={{ fontWeight: n.is_read ? 500 : 700, fontSize: 14 }}
                     secondaryTypographyProps={{ noWrap: false, sx: { fontSize: 12.5 } }}

@@ -4,10 +4,15 @@
 # NVIDIA-built wheel matching your JetPack (see docs/JETSON_DEPLOYMENT.md).
 # Same for OpenCV (ships with JetPack) and numpy. This file lists the rest.
 
-insightface>=0.7.3        # SCRFD detector + ArcFace recogniser (buffalo_l)
-requests>=2.31.0
-python-dotenv>=1.0.0      # optional: load .env in dev
+# Pinned for reproducible installs. install.sh installs ONLY this layer into a
+# venv --system-site-packages, so cv2/numpy/onnxruntime-gpu stay JetPack-provided.
+insightface==0.7.3        # SCRFD detector + ArcFace recogniser (buffalo_l)
+requests==2.31.0
+python-dotenv==1.0.1      # optional: load .env in dev
 
 # onnxruntime-gpu        -> install the NVIDIA Jetson wheel, not the PyPI one
 # opencv-python          -> use the JetPack-provided cv2 (built with CUDA/GStreamer)
 # numpy                  -> use the JetPack-provided numpy
+# albumentations         -> NOT installed here: enrollment (enroll_student.py) is
+#                           meant to run on the training PC (hard to build on Nano).
+#                           Live recognition (recognize_service.py) does not need it.

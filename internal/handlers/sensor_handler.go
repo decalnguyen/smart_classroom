@@ -61,7 +61,7 @@ func CheckSensorStatus() {
 	threshold := time.Duration(mins) * time.Minute
 
 	var sensors []models.Sensor
-	if err := db.DB.Where("status = ?", "Active").Find(&sensors).Error; err != nil {
+	if err := db.DB.Where("lower(status) = ?", "active").Find(&sensors).Error; err != nil {
 		log.Printf("Error fetching sensors: %v", err)
 		return
 	}
@@ -69,7 +69,7 @@ func CheckSensorStatus() {
 	for _, sensor := range sensors {
 		if time.Since(sensor.Timestamp) > threshold {
 			// Update the sensor's status to "inactive" in the Sensor table
-			if err := db.DB.Model(&sensor).Where("status = ?", "Active").Update("status", "Inactive").Error; err != nil {
+			if err := db.DB.Model(&sensor).Where("lower(status) = ?", "active").Update("status", "inactive").Error; err != nil {
 				log.Printf("Error updating sensor status for device_id %s: %v", sensor.DeviceID, err)
 			} else {
 				log.Printf("Sensor %s marked as inactive in Sensor table", sensor.DeviceID)
@@ -101,6 +101,9 @@ func HandlePostSensorData(c *gin.Context) {
 	if data.Status == "" {
 		data.Status = "active"
 	}
+	// Canonicalize so HTTP-ingested rows use the same short device_type as MQTT
+	// (e.g. the simulator's HTTP fallback sends "temperature" -> stored as "temp").
+	data.DeviceType = canonicalType(data.DeviceType)
 
 	if err := db.DB.Create(&data).Error; err != nil {
 		log.Printf("Error saving sensor data: %v", err)
@@ -110,7 +113,7 @@ func HandlePostSensorData(c *gin.Context) {
 
 	// Heartbeat: mark the owning sensor as active (no-op if it isn't registered).
 	db.DB.Model(&models.Sensor{}).Where("device_id = ?", data.DeviceID).
-		Updates(map[string]interface{}{"timestamp": data.Timestamp, "status": "Active"})
+		Updates(map[string]interface{}{"timestamp": data.Timestamp, "status": "active"})
 
 	// Publish to the realtime sensor channel only AFTER a successful DB write.
 	rabbitmq.Publish("sensor.data", data)
@@ -125,13 +128,33 @@ func HandleGetSensorData(c *gin.Context) {
 	deviceID := c.Param("device_id")
 	startTime := c.Query("start")
 	endTime := c.Query("end")
-	var data []models.SenSorData
 
-	// Retrieve all sensor data from the database
+	// Room + time-window scope: a teacher/student may only read a device in a room
+	// they teach/study in, and only the readings that fall within their class
+	// periods for that room ("xem theo khung giờ lịch dạy/học").
+	rooms, windows, isAll := actorRoomScope(c)
+	room := roomOf(deviceID)
+	if !isAll && !rooms[room] {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn chỉ xem được phòng trong lịch dạy/học của mình"})
+		return
+	}
+
+	var data []models.SenSorData
 	if err := db.DB.Where("device_id = ? AND timestamp BETWEEN ? AND ?", deviceID, startTime, endTime).Order("timestamp asc").Find(&data).Error; err != nil {
 		log.Printf("Error retrieving data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
 		return
+	}
+
+	if !isAll {
+		wins := windows[room]
+		kept := make([]models.SenSorData, 0, len(data))
+		for _, d := range data {
+			if inAnyWindow(wins, d.Timestamp) {
+				kept = append(kept, d)
+			}
+		}
+		data = kept
 	}
 	c.JSON(http.StatusOK, data)
 }
@@ -170,6 +193,18 @@ func HandleGetSensors(c *gin.Context) {
 		log.Printf("Error retrieving sensors: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve sensors"})
 		return
+	}
+
+	// Scope to the caller's rooms: teacher = rooms they teach, student = enrolled
+	// rooms, admin = all (so GV/SV only see devices of their own classrooms).
+	if rooms, _, isAll := actorRoomScope(c); !isAll {
+		kept := make([]models.Sensor, 0, len(sensors))
+		for _, s := range sensors {
+			if rooms[s.Location] {
+				kept = append(kept, s)
+			}
+		}
+		sensors = kept
 	}
 
 	c.JSON(http.StatusOK, sensors)
@@ -308,6 +343,14 @@ func HandlePostDeviceMode(c *gin.Context) {
 	// Validate identifiers to prevent URL/SSRF injection.
 	if !deviceIdent.MatchString(deviceType) || !deviceIdent.MatchString(deviceID) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device identifier"})
+		return
+	}
+
+	// Scope: a teacher may only control devices in rooms they teach (admin = all).
+	// The room is parsed from the device_id prefix, which is client-supplied, so it
+	// must be checked against the caller's room scope — mirroring the read paths.
+	if rooms, _, isAll := actorRoomScope(c); !isAll && !rooms[roomOf(deviceID)] {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn chỉ điều khiển được thiết bị trong phòng theo lịch dạy của mình"})
 		return
 	}
 

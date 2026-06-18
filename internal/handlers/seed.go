@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"time"
 
 	"smart_classroom/internal/db"
@@ -67,6 +68,58 @@ func vietName(i int) string {
 	return fmt.Sprintf("%s %s %s", surnames[i%len(surnames)], middles[(i/3)%len(middles)], givens[(i/7)%len(givens)])
 }
 
+// SeedRealStudents upserts real students (with physical face gallery on the edge)
+// and enrolls them in every class of their assigned classroom. Idempotent.
+func SeedRealStudents() {
+	type entry struct {
+		StudentID uint
+		MSSV      string
+		Name      string
+		Room      string // classroom_name
+	}
+	real := []entry{
+		{StudentID: 22521491, MSSV: "22521491", Name: "Nguyễn Ngô Nhật Toàn", Room: "A101"},
+		{StudentID: 22520707, MSSV: "22520707", Name: "Nguyễn Trường Anh Kiện", Room: "A101"},
+	}
+
+	for _, e := range real {
+		st := models.Student{
+			StudentID:   e.StudentID,
+			MSSV:        e.MSSV,
+			StudentName: e.Name,
+			Email:       e.MSSV + "@student.uit.edu.vn",
+		}
+		if err := db.DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "student_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"student_name", "email"}),
+		}).Omit("User", "Classes").Create(&st).Error; err != nil {
+			log.Printf("SeedRealStudents: upsert %s: %v", e.MSSV, err)
+			continue
+		}
+
+		// Find all classes in the assigned classroom.
+		var cr models.Classroom
+		if err := db.DB.Where("classroom_name = ?", e.Room).First(&cr).Error; err != nil {
+			log.Printf("SeedRealStudents: classroom %s not found", e.Room)
+			continue
+		}
+		var classes []models.Class
+		db.DB.Where("classroom_id = ?", cr.ClassroomID).Find(&classes)
+
+		enrollments := make([]models.ClassStudent, 0, len(classes))
+		for _, cl := range classes {
+			enrollments = append(enrollments, models.ClassStudent{ClassID: cl.ClassID, StudentID: e.StudentID})
+		}
+		if len(enrollments) > 0 {
+			if err := db.DB.Clauses(clause.OnConflict{DoNothing: true}).
+				Omit("Student", "Class").CreateInBatches(enrollments, 100).Error; err != nil {
+				log.Printf("SeedRealStudents: enroll %s: %v", e.MSSV, err)
+			}
+		}
+		log.Printf("SeedRealStudents: %s (%s) enrolled in %d classes at %s", e.Name, e.MSSV, len(classes), e.Room)
+	}
+}
+
 // SeedMockData populates a realistic dataset (~10 classrooms, ~70 students each)
 // the first time the system boots with an empty schema. Idempotent: it does
 // nothing if classrooms already exist.
@@ -128,17 +181,22 @@ func SeedMockData() {
 	}
 	db.DB.Clauses(clause.OnConflict{DoNothing: true}).Omit("Classes").CreateInBatches(&classrooms, 20)
 
-	// Sensors/devices per classroom.
+	// Sensors/devices per classroom. device_type uses the CANONICAL short codes so
+	// registry device_ids ("A101-temp") match telemetry ids exactly — otherwise the
+	// exact-id heartbeat never refreshes temp/humi rows (see docs/DATA_MODEL.md).
+	regTypes := []struct{ code, name string }{
+		{"light", "Ánh sáng"}, {"temp", "Nhiệt độ"}, {"humi", "Độ ẩm"}, {"smoke", "Khói/Gas"}, {"fan", "Quạt"},
+	}
 	sensors := make([]models.Sensor, 0, 50)
 	now := time.Now()
 	for _, cr := range classrooms {
-		for _, dt := range []string{"light", "temperature", "humidity", "smoke", "fan"} {
+		for _, dt := range regTypes {
 			sensors = append(sensors, models.Sensor{
-				DeviceID:   fmt.Sprintf("%s-%s", cr.ClassroomName, dt),
-				DeviceName: fmt.Sprintf("%s %s", cr.ClassroomName, dt),
-				DeviceType: dt,
+				DeviceID:   fmt.Sprintf("%s-%s", cr.ClassroomName, dt.code),
+				DeviceName: fmt.Sprintf("%s — %s", cr.ClassroomName, dt.name),
+				DeviceType: dt.code,
 				Location:   cr.ClassroomName,
-				Status:     "Active",
+				Status:     "active",
 				Timestamp:  now,
 			})
 		}
@@ -211,7 +269,8 @@ func SeedMockData() {
 			}
 		}
 	}
-	if err := db.DB.Omit("Student", "Class").CreateInBatches(enrollments, 500).Error; err != nil {
+	if err := db.DB.Clauses(clause.OnConflict{DoNothing: true}).
+		Omit("Student", "Class").CreateInBatches(enrollments, 500).Error; err != nil {
 		log.Printf("Seed: enrollments: %v", err)
 	}
 
@@ -307,46 +366,93 @@ func SeedTodayAttendance() {
 	if len(classes) == 0 {
 		return
 	}
-	byRoom := map[uint][]models.Class{}
+	classByID := map[uint]models.Class{}
+	classIDs := make([]uint, 0, len(classes))
 	for _, c := range classes {
-		byRoom[c.ClassroomID] = append(byRoom[c.ClassroomID], c)
+		classByID[c.ClassID] = c
+		classIDs = append(classIDs, c.ClassID)
+	}
+
+	// Each student's classes TODAY (sorted by start_min). Seed is student-centric so
+	// a student gets ONE daily status applied across ALL of their own enrolled
+	// classes — correct even when classes in a room have different rosters (e.g. the
+	// all-day demo class), unlike the old "one roster per room" assumption.
+	type csRow struct {
+		ClassID   uint
+		StudentID uint
+	}
+	var enr []csRow
+	db.DB.Table("class_students").Select("class_id, student_id").Where("class_id IN ?", classIDs).Scan(&enr)
+	studentClasses := map[uint][]models.Class{}
+	studentMeta := map[uint]models.Student{}
+	for _, e := range enr {
+		studentClasses[e.StudentID] = append(studentClasses[e.StudentID], classByID[e.ClassID])
+	}
+	// Stable iteration order (deterministic seed) + load student profiles for leaves.
+	studentIDs := make([]uint, 0, len(studentClasses))
+	for sid := range studentClasses {
+		studentIDs = append(studentIDs, sid)
+	}
+	sort.Slice(studentIDs, func(i, j int) bool { return studentIDs[i] < studentIDs[j] })
+	var studs []models.Student
+	db.DB.Where("student_id IN ?", studentIDs).Find(&studs)
+	for _, s := range studs {
+		studentMeta[s.StudentID] = s
 	}
 
 	rng := rand.New(rand.NewSource(int64(now.YearDay()) + 1000))
 	rows := make([]models.Attendance, 0, 8192)
 	leaves := make([]models.LeaveRequest, 0, 256)
-	mkRow := func(s models.Student, cl models.Class, status, tm string) {
+	mkRow := func(sid uint, cl models.Class, status, tm string) {
 		id := uuid.New().String()
 		cid := cl.ClassID
 		subj := cl.Subject
 		rows = append(rows, models.Attendance{
-			ID: &id, StudentID: s.StudentID, ClassroomID: cl.ClassroomID,
+			ID: &id, StudentID: sid, ClassroomID: cl.ClassroomID,
 			ClassID: &cid, Subject: &subj, Date: today,
 			AttendanceStatus: status, DetectionTime: tm, DeviceID: fmt.Sprintf("cam-%d", cl.ClassroomID),
 		})
 	}
+	// clock formats minutes-since-midnight (+second) as HH:MM:SS without minute overflow.
+	clock := func(totalMin, sec int) string {
+		return fmt.Sprintf("%02d:%02d:%02d", (totalMin/60)%24, totalMin%60, sec%60)
+	}
 
-	for _, cls := range byRoom {
-		var students []models.Student
-		db.DB.Joins("JOIN class_students cs ON cs.student_id = students.student_id").
-			Where("cs.class_id = ?", cls[0].ClassID).Find(&students)
-		for _, s := range students {
-			r := rng.Float64()
-			switch {
-			case r < 0.80: // present — attend every period
-				for _, cl := range cls {
-					h := cl.StartMin / 60
-					m := cl.StartMin % 60
-					mkRow(s, cl, models.StatusPresent, fmt.Sprintf("%02d:%02d:%02d", h, m+rng.Intn(4), rng.Intn(60)))
+	for _, sid := range studentIDs {
+		cls := studentClasses[sid]
+		sort.Slice(cls, func(i, j int) bool { return cls[i].StartMin < cls[j].StartMin })
+		// Draw the student's bucket ONCE for the whole day, then apply it
+		// consistently to every period (80% present / 8% late / 5% excused / 7% absent).
+		r := rng.Float64()
+		switch {
+		case r < 0.80: // present — attend every period of the day
+			for _, cl := range cls {
+				mkRow(sid, cl, models.StatusPresent, clock(cl.StartMin+rng.Intn(4), rng.Intn(60)))
+			}
+		case r < 0.88: // late to the first period, present for the rest
+			for i, cl := range cls {
+				if i == 0 {
+					mkRow(sid, cl, models.StatusLate, clock(cl.StartMin+10+rng.Intn(20), 0))
+				} else {
+					mkRow(sid, cl, models.StatusPresent, clock(cl.StartMin+rng.Intn(4), rng.Intn(60)))
 				}
-			case r < 0.88: // late to the first period only
-				mkRow(s, cls[0], models.StatusLate, fmt.Sprintf("%02d:%02d:00", cls[0].StartMin/60, cls[0].StartMin%60+10+rng.Intn(20)))
-			case r < 0.93: // excused — approved leave for the day
-				leaves = append(leaves, models.LeaveRequest{
-					StudentID: s.StudentID, StudentName: s.StudentName, AccountID: s.AccountID,
-					Date: today, Reason: "Nghỉ phép (có đơn)", Status: "approved", ReviewedBy: "system", CreatedAt: now,
+			}
+		case r < 0.93: // excused — approved leave (covers all periods, no attendance rows)
+			s := studentMeta[sid]
+			leaves = append(leaves, models.LeaveRequest{
+				StudentID: sid, StudentName: s.StudentName, AccountID: s.AccountID,
+				Date: today, Reason: "Nghỉ phép (có đơn)", Status: "approved", ReviewedBy: "system", CreatedAt: now,
+			})
+		default: // absent — explicit 'absent' row for every period
+			for _, cl := range cls {
+				id := uuid.New().String()
+				cid := cl.ClassID
+				subj := cl.Subject
+				rows = append(rows, models.Attendance{
+					ID: &id, StudentID: sid, ClassroomID: cl.ClassroomID,
+					ClassID: &cid, Subject: &subj, Date: today,
+					AttendanceStatus: models.StatusAbsent, DetectionTime: "", DeviceID: "seed",
 				})
-			default: // absent — no record
 			}
 		}
 	}
@@ -357,6 +463,64 @@ func SeedTodayAttendance() {
 		db.DB.CreateInBatches(leaves, 200)
 	}
 	log.Printf("Seed: today attendance — %d records, %d approved leaves", len(rows), len(leaves))
+}
+
+// SeedLeaveRequests creates a realistic backlog of leave requests with MIXED
+// statuses (chờ duyệt / đã duyệt / từ chối) across recent + upcoming dates, so the
+// "Đơn xin nghỉ" page and the approve/reject workflow are demonstrable (not all one
+// status). Idempotent: skips once any pending leave exists. Today-dated approved
+// leaves are created separately by SeedTodayAttendance (attendance excused source).
+func SeedLeaveRequests() {
+	var pending int64
+	db.DB.Model(&models.LeaveRequest{}).Where("status = ?", "pending").Count(&pending)
+	if pending > 0 {
+		return // already have pending leaves (seeded or real submissions)
+	}
+	loc := time.FixedZone("UTC+7", 7*60*60)
+	now := time.Now().In(loc)
+	var students []models.Student
+	db.DB.Order("student_id").Limit(60).Find(&students)
+	if len(students) == 0 {
+		return
+	}
+	reasons := []string{"Ốm, có giấy khám bệnh", "Việc gia đình", "Khám sức khỏe định kỳ", "Tham gia cuộc thi", "Lý do cá nhân"}
+	rng := rand.New(rand.NewSource(int64(now.YearDay()) + 777))
+	leaves := make([]models.LeaveRequest, 0, len(students))
+	for i, s := range students {
+		offset := rng.Intn(11) - 5 // -5..+5 days; avoid today (handled elsewhere)
+		if offset == 0 {
+			offset = 3
+		}
+		date := now.AddDate(0, 0, offset).Format("2006-01-02")
+		r := rng.Float64()
+		status, reviewedBy := "pending", ""
+		var reviewedAt *time.Time
+		if offset < 0 {
+			// Past requests are already decided (mostly approved, some rejected).
+			if r < 0.75 {
+				status, reviewedBy = "approved", "teacher"
+			} else {
+				status, reviewedBy = "rejected", "teacher"
+			}
+			t := now.AddDate(0, 0, offset-1)
+			reviewedAt = &t
+		} else if r < 0.4 {
+			// Some upcoming requests pre-approved; the rest remain pending.
+			status, reviewedBy = "approved", "teacher"
+			t := now
+			reviewedAt = &t
+		}
+		leaves = append(leaves, models.LeaveRequest{
+			StudentID: s.StudentID, StudentName: s.StudentName, AccountID: s.AccountID,
+			Date: date, Reason: reasons[i%len(reasons)], Status: status,
+			ReviewedBy: reviewedBy, ReviewedAt: reviewedAt, CreatedAt: now.AddDate(0, 0, -rng.Intn(4)),
+		})
+	}
+	if err := db.DB.CreateInBatches(leaves, 100).Error; err != nil {
+		log.Printf("SeedLeaveRequests: %v", err)
+		return
+	}
+	log.Printf("SeedLeaveRequests: %d leave requests (mixed statuses)", len(leaves))
 }
 
 // SeedTeacherAssignments links teachers to classrooms (ClassroomTeacher) and

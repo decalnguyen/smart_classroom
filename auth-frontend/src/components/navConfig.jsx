@@ -17,7 +17,7 @@ export const navItems = [
   { label: 'Cảm biến & Thiết bị', path: '/sensors', icon: <SensorsIcon /> },
   { label: 'Điểm danh', path: '/attendance', icon: <FactCheckIcon />, roles: ['admin', 'teacher'] },
   { label: 'Điểm danh của tôi', path: '/my-attendance', icon: <HowToRegIcon />, roles: ['student'] },
-  { label: 'Lịch học', path: '/schedule', icon: <CalendarMonthIcon /> },
+  { label: 'Lịch học', path: '/schedule', icon: <CalendarMonthIcon />, roleLabels: { teacher: 'Lịch dạy' } },
   { label: 'Đơn xin nghỉ', path: '/leaves', icon: <EventBusyIcon /> },
   { label: 'Thông báo', path: '/notifications', icon: <NotificationsIcon /> },
   { label: 'Báo cáo', path: '/reports', icon: <AssessmentIcon />, roles: ['admin', 'teacher'] },

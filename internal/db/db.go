@@ -10,6 +10,20 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// gormLogger keeps warnings + slow queries but silences the expected
+// "record not found" noise (e.g. findOngoingClass on an empty room) and the
+// per-query Info spam, so logs surface real problems instead of normal misses.
+var gormLogger = logger.New(
+	log.New(os.Stdout, "\r\n", log.LstdFlags),
+	logger.Config{
+		SlowThreshold:             300 * time.Millisecond,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		Colorful:                  false,
+	},
 )
 
 var DB *gorm.DB
@@ -42,7 +56,7 @@ func InitDB() {
 	// Postgres may still be starting up when this service boots, so retry the
 	// connection for a while before giving up.
 	for attempt := 1; attempt <= 30; attempt++ {
-		DB, err = gorm.Open(postgres.Open(dsn()), &gorm.Config{})
+		DB, err = gorm.Open(postgres.Open(dsn()), &gorm.Config{Logger: gormLogger})
 		if err == nil {
 			sqlDB, dbErr := DB.DB()
 			if dbErr == nil && sqlDB.Ping() == nil {
@@ -63,8 +77,10 @@ func InitDB() {
 	modelsToMigrate := []interface{}{
 		&models.SenSorData{},
 		&models.UserProfile{},
-		&models.Face{},
+		// models.Face is DEAD (unreferenced); the canonical face store is the raw-SQL
+		// pgvector table face_embeddings created in runMigrations(). See docs/DATA_MODEL.md.
 		&models.Notification{},
+		&models.NotificationState{},
 		&models.Sensor{},
 		&models.Building{},
 		&models.Classroom{},
@@ -119,7 +135,24 @@ func runMigrations() {
 		`CREATE INDEX IF NOT EXISTS idx_face_emb_student ON face_embeddings (student_id)`,
 		// Idempotent attendance: one row per student/class/date.
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_student_class_date ON attendances (student_id, class_id, date)`,
+		// Enrollment integrity: a student is enrolled in a class at most once.
+		// (Without this, re-running seeds duplicated rows → duplicate roster entries.)
+		`DELETE FROM class_students a USING class_students b WHERE a.id > b.id AND a.class_id = b.class_id AND a.student_id = b.student_id`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_class_student_unique ON class_students (class_id, student_id)`,
+		// Teacher↔classroom assignment is unique (no duplicate assignments).
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_classroom_teacher_unique ON classroom_teachers (classroom_id, teacher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sensordata_ts ON sen_sor_data (timestamp)`,
+		// Canonicalize the device registry to the SHORT telemetry vocabulary so
+		// registry device_ids align with sen_sor_data and the heartbeat works
+		// (idempotent: no-op once converted). See docs/DATA_MODEL.md.
+		`UPDATE sensors SET device_id = regexp_replace(device_id, '-temperature$', '-temp'), device_type='temp' WHERE lower(device_type)='temperature'`,
+		`UPDATE sensors SET device_id = regexp_replace(device_id, '-humidity$', '-humi'), device_type='humi' WHERE lower(device_type)='humidity'`,
+		// Unify status casing to lowercase across registry + telemetry.
+		`UPDATE sensors SET status = lower(status) WHERE status <> lower(status)`,
+		`UPDATE sen_sor_data SET status = lower(status) WHERE status <> lower(status)`,
+		// Back-fill any historical long-name telemetry rows to short codes.
+		`UPDATE sen_sor_data SET device_type='temp' WHERE lower(device_type)='temperature'`,
+		`UPDATE sen_sor_data SET device_type='humi' WHERE lower(device_type)='humidity'`,
 	}
 	for _, s := range stmts {
 		if err := DB.Exec(s).Error; err != nil {

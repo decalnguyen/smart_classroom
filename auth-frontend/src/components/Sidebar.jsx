@@ -51,7 +51,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
               }}
             >
               <ListItemIcon sx={{ minWidth: 40 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} />
+              <ListItemText primary={(item.roleLabels && item.roleLabels[role]) || item.label} />
             </ListItemButton>
           )
         })}

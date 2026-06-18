@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +14,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const insecureDeviceKey = "dev-device-key" // legacy default we now refuse/warn on
+
+// deviceMasterKey is the optional shared fleet key, resolved ONCE at startup (not
+// hardcoded). Empty = master key disabled (only per-device tokens in
+// device_credentials are accepted). In production the insecure default is fatal.
+var deviceMasterKey = loadDeviceMasterKey()
+
+func loadDeviceMasterKey() string {
+	k := os.Getenv("DEVICE_API_KEY")
+	prod := os.Getenv("GIN_MODE") == "release" || strings.EqualFold(os.Getenv("APP_ENV"), "production")
+	switch {
+	case k == "":
+		log.Println("ℹ️  DEVICE_API_KEY unset — shared master key disabled; only per-device tokens (device_credentials) are accepted.")
+		return ""
+	case k == insecureDeviceKey:
+		if prod {
+			log.Fatal("FATAL: DEVICE_API_KEY is the insecure default in production. Set a real key or use per-device tokens.")
+		}
+		log.Println("⚠️  DEVICE_API_KEY is the insecure DEV default — do not use in production.")
+		return k
+	default:
+		return k
+	}
+}
 
 // RateLimit is a simple in-memory sliding-window limiter per client IP.
 // Protects brute-forceable endpoints (e.g. /login) and device ingestion.
@@ -58,8 +84,8 @@ func RequireDevice() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing device key"})
 			return
 		}
-		// Shared master key (fast path for fleets behind a gateway).
-		if master := os.Getenv("DEVICE_API_KEY"); master != "" && key == master {
+		// Shared master key (fast path for fleets behind a gateway), if configured.
+		if deviceMasterKey != "" && key == deviceMasterKey {
 			c.Next()
 			return
 		}

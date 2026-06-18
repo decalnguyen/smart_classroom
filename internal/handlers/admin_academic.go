@@ -81,6 +81,67 @@ func HandleCreateMakeup(c *gin.Context) {
 	c.JSON(http.StatusOK, m)
 }
 
+func HandleGetMakeups(c *gin.Context) {
+	var rows []models.MakeupSession
+	db.DB.Order("date asc, start_min asc").Find(&rows)
+	c.JSON(http.StatusOK, rows)
+}
+
+func HandleDeleteMakeup(c *gin.Context) {
+	id := parseUintParam(c.Param("id"))
+	res := db.DB.Delete(&models.MakeupSession{}, id)
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy"})
+		return
+	}
+	writeAudit(c, "delete", "makeup", uintStr(id), "")
+	c.JSON(http.StatusOK, gin.H{"message": "Đã xoá buổi bù"})
+}
+
+// HandleListClasses lists every class/period with its room + live enrolled count,
+// for the admin class-enrollment UI. (GET /classes/:id is classroom/time scoped and
+// returns no roster, so it can't be reused here.)
+func HandleListClasses(c *gin.Context) {
+	type classRow struct {
+		ClassID       uint   `json:"class_id"`
+		Subject       string `json:"subject"`
+		ClassroomID   uint   `json:"classroom_id"`
+		ClassroomName string `json:"classroom_name"`
+		DayOfWeek     string `json:"day_of_week"`
+		StartMin      int    `json:"start_min"`
+		EndMin        int    `json:"end_min"`
+		Capacity      int    `json:"capacity"`
+		Enrolled      int64  `json:"enrolled"`
+	}
+	var rows []classRow
+	db.DB.Table("classes").
+		Select(`classes.class_id, classes.subject, classes.classroom_id, classrooms.classroom_name,
+			classes.day_of_week, classes.start_min, classes.end_min, classrooms.capacity,
+			(SELECT count(*) FROM class_students cs WHERE cs.class_id = classes.class_id) AS enrolled`).
+		Joins("LEFT JOIN classrooms ON classrooms.classroom_id = classes.classroom_id").
+		Order("classrooms.classroom_name asc, classes.start_min asc").
+		Scan(&rows)
+	c.JSON(http.StatusOK, rows)
+}
+
+// HandleGetClassRoster returns the students enrolled in a class (for the roster UI).
+func HandleGetClassRoster(c *gin.Context) {
+	classID := parseUintParam(c.Param("id"))
+	type sRow struct {
+		StudentID   uint   `json:"student_id"`
+		MSSV        string `json:"mssv"`
+		StudentName string `json:"student_name"`
+	}
+	var rows []sRow
+	db.DB.Table("students").
+		Select("students.student_id, students.mssv, students.student_name").
+		Joins("JOIN class_students ON class_students.student_id = students.student_id").
+		Where("class_students.class_id = ?", classID).
+		Order("students.student_name asc").
+		Scan(&rows)
+	c.JSON(http.StatusOK, rows)
+}
+
 // ---------- 3.5 Enrollment with capacity check ----------
 
 func HandleEnrollStudent(c *gin.Context) {
@@ -171,6 +232,27 @@ func autoCloseEndedPeriods() {
 	m := minutesOf(now)
 	var classes []models.Class
 	db.DB.Where("day_of_week = ? AND end_min <= ?", now.Weekday().String(), m).Find(&classes)
+
+	// Also close ended MAKEUP sessions (buổi bù) — these are date-based, not
+	// day_of_week, so the weekday query above misses them. findOngoingClass treats
+	// a live makeup as the ongoing class, so its no-shows must be frozen too.
+	var makeups []models.MakeupSession
+	db.DB.Where("date = ? AND end_min <= ?", today, m).Find(&makeups)
+	seen := map[uint]bool{}
+	for _, cl := range classes {
+		seen[cl.ClassID] = true
+	}
+	for _, mk := range makeups {
+		if seen[mk.ClassID] {
+			continue
+		}
+		var cl models.Class
+		if err := db.DB.First(&cl, mk.ClassID).Error; err == nil {
+			classes = append(classes, cl)
+			seen[cl.ClassID] = true
+		}
+	}
+
 	if len(classes) == 0 {
 		return
 	}

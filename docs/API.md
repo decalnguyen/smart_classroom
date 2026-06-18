@@ -66,6 +66,8 @@ Request: `{ "mode": 0..3 }` (0 = off; fan uses 1–3 as speed; on/off devices tr
 Publishes the MQTT command `/<room>/<device>/cmd` with `{"value":N,"level":N,"action":"on|off"}` (room derived from `device_id`, e.g. `A101-fan` → `/A101/fan/cmd`).
 Response `200`: `{ "message": "Command sent", "device", "mode", "via": "mqtt" }`
 
+> **Điều khiển theo thời khóa biểu (background):** `ScheduleAutoControl` (chạy nền mỗi `SCHEDULE_CONTROL_SECONDS`, mặc định 60; tắt bằng `SCHEDULE_AUTOCONTROL=off`) tự **tắt đèn + quạt** cho phòng **không có tiết** (theo `findOngoingClass`, tôn trọng ngày nghỉ/buổi bù) — tiết kiệm điện. Chỉ phát lệnh khi phòng chuyển từ *có tiết → trống* (và quét đầu cho phòng đang trống), không spam và không tranh chấp với điều khiển thủ công khi đang có tiết.
+
 ### Electricity — `GET /electricity?id=&type=` (*Auth*), `POST/PUT/DELETE /electricity[/:id]` (*Staff*).
 
 ---

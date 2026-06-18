@@ -4,6 +4,7 @@ import { Box, Toolbar } from '@mui/material'
 import Sidebar, { DRAWER_WIDTH } from './Sidebar'
 import Topbar from './Topbar'
 import AlarmBanner from './AlarmBanner'
+import GlobalNotifSnackbar from './GlobalNotifSnackbar'
 
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -22,6 +23,7 @@ export default function Layout() {
       >
         <Toolbar />
         <AlarmBanner />
+        <GlobalNotifSnackbar />
         <Outlet />
       </Box>
     </Box>

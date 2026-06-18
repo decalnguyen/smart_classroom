@@ -4,7 +4,6 @@ import {
   ToggleButton, ToggleButtonGroup, Skeleton, Divider, LinearProgress,
   Select, MenuItem, FormControl, InputLabel,
 } from '@mui/material'
-import { useTheme } from '@mui/material/styles'
 import { useNavigate } from 'react-router-dom'
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
 import GroupsIcon from '@mui/icons-material/Groups'
@@ -18,7 +17,6 @@ import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import AcUnitIcon from '@mui/icons-material/AcUnit'
 import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural'
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend } from 'recharts'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import GaugeCard from '../components/GaugeCard'
@@ -27,12 +25,12 @@ import useAttendanceStream from '../hooks/useAttendanceStream'
 import { useAuth } from '../context/AuthContext'
 import { useRealtime } from '../context/RealtimeContext'
 import { sensorApi, statsApi } from '../api/client'
+import { LIGHT_THRESHOLDS, TEMP_THRESHOLDS, HUMIDITY_THRESHOLDS, SMOKE_THRESHOLDS } from '../constants/sensorThresholds'
 
 const SMOKE_LIMIT = 300
 const TEMP_LIMIT = 50
 
 export default function Dashboard() {
-  const theme = useTheme()
   const navigate = useNavigate()
   const { role } = useAuth()
   const canControl = role === 'admin' || role === 'teacher'
@@ -61,13 +59,23 @@ export default function Dashboard() {
     return () => { active = false; clearInterval(t) }
   }, [])
 
+  // Reset optimistic actuator toggles when switching rooms (stale cross-room state).
+  useEffect(() => { setLight(false); setFan(false) }, [room])
+
   // Realtime detail for the selected room.
-  const { latest, points, status } = useSensorStream(40, room)
+  const { latest, status } = useSensorStream(40, room)
   const num = (m) => (latest[m] ? latest[m].value : null)
   const smokeVal = latest.smoke?.value ?? 0
   const tempVal = latest.temperature?.value ?? 0
-  const danger = smokeVal >= SMOKE_LIMIT || tempVal >= TEMP_LIMIT
+  // Room safety verdict mirrors the overview card badge (backend calibrated
+  // thresholds) so the same room can't show "An toàn" here and "Nguy hiểm" there.
+  // Fall back to live limits only until the overview row is available.
+  const selectedRoom = (overview || []).find((r) => r.classroom_name === room)
+  const danger = selectedRoom ? !!selectedRoom.danger : (smokeVal >= SMOKE_LIMIT || tempVal >= TEMP_LIMIT)
   const rate = stats?.attendance?.rate ? Math.round(stats.attendance.rate * 100) : 0
+
+  // Rooms that actually have a class in session right now (for honest labels).
+  const activeRooms = (overview || []).filter((r) => r.current_class).length
 
   const activity = [
     ...events.map((e) => ({ type: 'attendance', time: e.detection_time, text: `${e.student_name} (MSSV ${e.mssv}) điểm danh tại ${e.subject || ''}`, ts: e._ts || 0 })),
@@ -76,15 +84,13 @@ export default function Dashboard() {
 
   const control = async (type, on) => {
     try {
-      await sensorApi.setDeviceMode(type, `${room || 'A101'}-${type}`, on ? 1 : 0)
+      await sensorApi.setDeviceMode(type, `${room}-${type}`, on ? 1 : 0)
       setToast({ severity: 'success', msg: `Đã gửi lệnh ${type === 'light' ? 'đèn' : 'quạt'} (${room}): ${on ? 'BẬT' : 'TẮT'}` })
     } catch {
       setToast({ severity: 'error', msg: 'Gửi lệnh thất bại' })
     }
   }
 
-  const grid = theme.palette.mode === 'dark' ? 'rgba(148,163,184,0.15)' : '#eef2f7'
-  const axisTick = { fontSize: 11, fill: theme.palette.text.secondary }
 
   return (
     <Box>
@@ -100,9 +106,9 @@ export default function Dashboard() {
           Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} variant="rounded" height={92} />)
         ) : (
           <>
-            <StatCard icon={<MeetingRoomIcon />} value={stats.classrooms} label="Phòng học" color="#2563eb" />
+            <StatCard icon={<MeetingRoomIcon />} value={stats.classrooms} label="Phòng học" color="#2563eb" sub={overview !== null ? `${activeRooms} đang có tiết` : undefined} />
             <StatCard icon={<GroupsIcon />} value={stats.students} label="Học sinh" color="#0891b2" sub={`${stats.teachers} giáo viên`} />
-            <StatCard icon={<FactCheckIcon />} value={stats.attendance.present_today} label="Có mặt hôm nay" color="#16a34a" sub={`${stats.attendance.late_today || 0} muộn · ${rate}% tham gia`} onClick={() => navigate('/reports')} />
+            <StatCard icon={<FactCheckIcon />} value={stats.attendance.attended_today ?? (stats.attendance.present_today + (stats.attendance.late_today || 0))} label="Lượt có mặt hôm nay" color="#16a34a" sub={`${stats.attendance.late_today || 0} lượt muộn · ${rate}% tham gia`} onClick={() => navigate('/reports')} />
             <StatCard icon={<WarningAmberIcon />} value={stats.alerts_today} label="Cảnh báo hôm nay" color={stats.alerts_today > 0 ? '#dc2626' : '#64748b'} onClick={() => navigate('/notifications')} />
             <StatCard icon={<SensorsIcon />} value={`${stats.sensors_active}/${stats.sensors_total}`} label="Thiết bị hoạt động" color="#7c3aed" />
           </>
@@ -112,11 +118,21 @@ export default function Dashboard() {
       {/* ALL-CLASSROOMS OVERVIEW GRID */}
       <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
         <Typography variant="h6">Trạng thái các lớp học</Typography>
-        {overview && <Chip size="small" label={`${overview.length} phòng`} variant="outlined" />}
+        {overview && (
+          <Chip
+            size="small"
+            label={role === 'admin' ? `${overview.length} phòng` : `${overview.length} phòng đang có tiết`}
+            variant="outlined"
+          />
+        )}
       </Stack>
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' }, mb: 3 }}>
         {!overview ? (
           Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} variant="rounded" height={150} />)
+        ) : overview.length === 0 ? (
+          <Alert severity="info" sx={{ gridColumn: '1 / -1' }}>
+            Hiện không có tiết của bạn đang diễn ra. Bạn chỉ giám sát phòng trong khung giờ dạy/học của mình.
+          </Alert>
         ) : (
           overview.map((r) => {
             const a = r.attendance || {}
@@ -139,19 +155,33 @@ export default function Dashboard() {
                     <Chip size="small" label={r.danger ? '⚠ Nguy hiểm' : '✓ An toàn'} color={r.danger ? 'error' : 'success'} variant={r.danger ? 'filled' : 'outlined'} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary">{r.building}</Typography>
+                  {r.current_class ? (
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'primary.main', fontWeight: 600 }}>
+                      📚 {r.current_class.subject} · Tiết {r.current_class.period} · {r.current_class.time}
+                      {r.current_class.teacher ? ` · ${r.current_class.teacher}` : ''}
+                    </Typography>
+                  ) : (
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.disabled' }}>
+                      Phòng trống (không có tiết)
+                    </Typography>
+                  )}
                   <Stack direction="row" spacing={1.5} flexWrap="wrap" sx={{ mt: 1, color: 'text.secondary' }}>
                     <Typography variant="caption">🌡 {s.temperature || '--'}°C</Typography>
                     <Typography variant="caption">💧 {s.humidity || '--'}%</Typography>
                     <Typography variant="caption">☀ {s.light || '--'}</Typography>
                     <Typography variant="caption" sx={{ color: s.smoke >= SMOKE_LIMIT ? 'error.main' : 'inherit' }}>🔥 {s.smoke || '--'}</Typography>
                   </Stack>
-                  <Box sx={{ mt: 1.5 }}>
-                    <Stack direction="row" justifyContent="space-between">
-                      <Typography variant="caption" color="text.secondary">Điểm danh</Typography>
-                      <Typography variant="caption" fontWeight={700}>{(a.present || 0) + (a.late || 0)}/{a.enrolled || 0} · {pct}%</Typography>
-                    </Stack>
-                    <LinearProgress variant="determinate" value={pct} color={pct >= 75 ? 'success' : pct >= 50 ? 'warning' : 'error'} sx={{ height: 7, borderRadius: 4, mt: 0.5 }} />
-                  </Box>
+                  {(a.enrolled || 0) > 0 && (
+                    <Box sx={{ mt: 1.5 }}>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="caption" color="text.secondary">
+                          {r.current_class ? 'Lượt điểm danh (gộp tiết)' : 'Lượt điểm danh hôm nay'}
+                        </Typography>
+                        <Typography variant="caption" fontWeight={700}>{(a.present || 0) + (a.late || 0)}/{a.enrolled} · {pct}%</Typography>
+                      </Stack>
+                      <LinearProgress variant="determinate" value={pct} color={pct >= 75 ? 'success' : pct >= 50 ? 'warning' : 'error'} sx={{ height: 7, borderRadius: 4, mt: 0.5 }} />
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
             )
@@ -171,34 +201,13 @@ export default function Dashboard() {
       </Stack>
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, mb: 3 }}>
-        <GaugeCard label="Ánh sáng" value={num('light')} unit="lux" min={0} max={1000} color="#f59e0b" icon={<LightModeIcon fontSize="small" />} />
-        <GaugeCard label="Nhiệt độ" value={num('temperature')} unit="°C" min={0} max={60} color="#ea580c" danger={tempVal >= TEMP_LIMIT} icon={<ThermostatIcon fontSize="small" />} />
-        <GaugeCard label="Độ ẩm" value={num('humidity')} unit="%" min={0} max={100} color="#0284c7" icon={<WaterDropIcon fontSize="small" />} />
-        <GaugeCard label="Khói / khí gas" value={num('smoke')} unit="ppm" min={0} max={600} color="#6d4c41" danger={smokeVal >= SMOKE_LIMIT} icon={<LocalFireDepartmentIcon fontSize="small" />} />
+        <GaugeCard label="Ánh sáng" value={num('light')} unit="lux" min={0} max={1000} color="#f59e0b" icon={<LightModeIcon fontSize="small" />} thresholds={LIGHT_THRESHOLDS} />
+        <GaugeCard label="Nhiệt độ" value={num('temperature')} unit="°C" min={0} max={60} color="#ea580c" danger={tempVal >= TEMP_LIMIT} icon={<ThermostatIcon fontSize="small" />} thresholds={TEMP_THRESHOLDS} />
+        <GaugeCard label="Độ ẩm" value={num('humidity')} unit="%" min={0} max={100} color="#0284c7" icon={<WaterDropIcon fontSize="small" />} thresholds={HUMIDITY_THRESHOLDS} />
+        <GaugeCard label="Khói / khí gas" value={num('smoke')} unit="ppm" min={0} max={600} color="#6d4c41" danger={smokeVal >= SMOKE_LIMIT} icon={<LocalFireDepartmentIcon fontSize="small" />} thresholds={SMOKE_THRESHOLDS} />
       </Box>
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '2fr 1fr' } }}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" mb={1}>Biểu đồ cảm biến — {room || '...'}</Typography>
-            <Box sx={{ height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: -12 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-                  <XAxis dataKey="time" tick={axisTick} minTickGap={28} />
-                  <YAxis tick={axisTick} />
-                  <RTooltip contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8 }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="temperature" name="Nhiệt độ (°C)" stroke="#ea580c" dot={false} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="humidity" name="Độ ẩm (%)" stroke="#0284c7" dot={false} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="smoke" name="Khói" stroke="#dc2626" dot={false} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="light" name="Ánh sáng (lux)" stroke="#f59e0b" dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </Box>
-          </CardContent>
-        </Card>
-
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
         <Stack spacing={2}>
           <Card sx={{ bgcolor: danger ? 'error.main' : 'success.main', color: '#fff', border: 'none' }}>
             <CardContent>

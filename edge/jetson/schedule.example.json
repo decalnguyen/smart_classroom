@@ -1,0 +1,16 @@
+[
+  {
+    "class_id": 1,
+    "subject": "Lập trình nhúng",
+    "weekday": 0,
+    "time_start": "07:00",
+    "time_end": "09:30"
+  },
+  {
+    "class_id": 2,
+    "subject": "Lập trình nhúng",
+    "weekday": 2,
+    "time_start": "09:45",
+    "time_end": "12:15"
+  }
+]

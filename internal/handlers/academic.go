@@ -89,9 +89,11 @@ func writeAudit(c *gin.Context, action, entity, entityID, detail string) {
 	})
 }
 
-// ----- Attendance daily roll-up (per classroom, per student) -----
-// Keeps the dashboard / reports / overview CONSISTENT: one status per student
-// per classroom per day (precedence present > late > excused > absent).
+// ----- Attendance daily roll-up (per classroom, summed over class-sessions) -----
+// A classroom hosts many class-SESSIONS (tiết/môn) per day. The roll-up SUMS each
+// session: numbers are attendance instances ("lượt"), not a distinct headcount —
+// so a student with 9 periods in a room counts 9 slots. Keeps the dashboard /
+// reports / overview CONSISTENT (single source of truth).
 
 type RoomDaily struct {
 	Present  int     `json:"present"`
@@ -102,7 +104,16 @@ type RoomDaily struct {
 	Rate     float64 `json:"rate"`
 }
 
-// dailyRollup computes per-classroom attendance for a date across that day's periods.
+// dailyRollup computes per-classroom attendance for a date as a SUM over that
+// day's class-SESSIONS. A "slot" is one (class_id, student_id) pair; students are
+// NOT deduped across the day's periods, so a room's totals are attendance instances
+// ("lượt"), not a distinct headcount. Enrolled[room] = sum over the day's sessions
+// of len(roster). Rate = (Present+Late)/(Enrolled-Excused).
+//
+// We treat the whole day as one period set (every session scheduled that weekday
+// is summed): a no-show slot is excused if the student has an approved leave,
+// otherwise absent. This is the "cộng dồn theo lớp/môn" the dashboard + reports
+// expect. LIMITATION: makeup sessions (date-based, not day_of_week) are not summed.
 func dailyRollup(classroomIDs []uint, date, weekday string) map[uint]*RoomDaily {
 	res := map[uint]*RoomDaily{}
 	for _, id := range classroomIDs {
@@ -112,71 +123,82 @@ func dailyRollup(classroomIDs []uint, date, weekday string) map[uint]*RoomDaily 
 		return res
 	}
 
-	// Enrolled students per classroom today (distinct).
-	type pair struct {
-		ClassroomID uint
-		StudentID   uint
-	}
-	var enr []pair
-	db.DB.Table("class_students cs").
-		Select("DISTINCT classes.classroom_id, cs.student_id").
-		Joins("JOIN classes ON classes.class_id = cs.class_id").
-		Where("classes.day_of_week = ? AND classes.classroom_id IN ?", weekday, classroomIDs).
-		Scan(&enr)
-	enrolled := map[uint]map[uint]bool{} // classroom -> set(student)
-	for _, p := range enr {
-		if enrolled[p.ClassroomID] == nil {
-			enrolled[p.ClassroomID] = map[uint]bool{}
-		}
-		enrolled[p.ClassroomID][p.StudentID] = true
+	// Load the day's sessions (one row per class/period) for these rooms.
+	var classes []models.Class
+	db.DB.Where("day_of_week = ? AND classroom_id IN ?", weekday, classroomIDs).Find(&classes)
+	if len(classes) == 0 {
+		return res
 	}
 
-	// Attendance rows for today's periods.
+	// classID -> classroomID; collect the class ids to sum.
+	sessions := map[uint]uint{}
+	classIDs := make([]uint, 0, len(classes))
+	for _, cl := range classes {
+		sessions[cl.ClassID] = cl.ClassroomID
+		classIDs = append(classIDs, cl.ClassID)
+	}
+
+	// Roster per session (slot universe). Do NOT dedup students across sessions.
+	type csRow struct {
+		ClassID   uint
+		StudentID uint
+	}
+	var rosterRows []csRow
+	db.DB.Table("class_students").
+		Select("class_id, student_id").
+		Where("class_id IN ?", classIDs).
+		Scan(&rosterRows)
+	roster := map[uint][]uint{} // classID -> []studentID
+	for _, r := range rosterRows {
+		roster[r.ClassID] = append(roster[r.ClassID], r.StudentID)
+	}
+
+	// Per-slot status. The write-path dedup key (student_id, class_id, date)
+	// guarantees at most one attendance row per slot, so no best-status precedence
+	// is needed: each row contributes its own status to its session.
 	type arow struct {
-		ClassroomID uint
-		StudentID   uint
-		Status      string
+		ClassID   uint
+		StudentID uint
+		Status    string
 	}
 	var ars []arow
 	db.DB.Table("attendances a").
-		Select("classes.classroom_id, a.student_id, a.attendance_status as status").
+		Select("a.class_id, a.student_id, a.attendance_status as status").
 		Joins("JOIN classes ON classes.class_id = a.class_id").
 		Where("a.date = ? AND classes.day_of_week = ? AND classes.classroom_id IN ?", date, weekday, classroomIDs).
 		Scan(&ars)
-	// best status per (classroom, student): present > late
-	best := map[uint]map[uint]string{}
-	rank := map[string]int{models.StatusPresent: 3, models.StatusLate: 2, models.StatusExcused: 1}
+	status := map[uint]map[uint]string{} // classID -> studentID -> status
 	for _, a := range ars {
-		if best[a.ClassroomID] == nil {
-			best[a.ClassroomID] = map[uint]string{}
+		if a.ClassID == 0 {
+			continue
 		}
-		cur := best[a.ClassroomID][a.StudentID]
-		if rank[a.Status] > rank[cur] {
-			best[a.ClassroomID][a.StudentID] = a.Status
+		if status[a.ClassID] == nil {
+			status[a.ClassID] = map[uint]string{}
 		}
+		status[a.ClassID][a.StudentID] = a.Status
 	}
 
-	// Approved leaves for the date -> excused (if not already present/late).
+	// Approved leave for the date is the SINGLE source of truth for excused: a
+	// missing slot whose student is on leave is excused in EVERY session that day.
 	var leaveStudents []uint
-	db.DB.Model(&models.LeaveRequest{}).Where("date = ? AND status = ?", date, "approved").Pluck("student_id", &leaveStudents)
+	db.DB.Model(&models.LeaveRequest{}).
+		Where("date = ? AND status = ?", date, "approved").
+		Pluck("student_id", &leaveStudents)
 	leaveSet := map[uint]bool{}
 	for _, s := range leaveStudents {
 		leaveSet[s] = true
 	}
 
-	for cid, students := range enrolled {
-		rd := res[cid]
+	// Tally per room = sum over the day's sessions (every slot counts).
+	for cid, classroomID := range sessions {
+		rd := res[classroomID]
 		if rd == nil {
 			rd = &RoomDaily{}
-			res[cid] = rd
+			res[classroomID] = rd
 		}
-		rd.Enrolled = len(students)
-		for sid := range students {
-			st := best[cid][sid]
-			if st == "" && leaveSet[sid] {
-				st = models.StatusExcused
-			}
-			switch st {
+		for _, sid := range roster[cid] {
+			rd.Enrolled++
+			switch status[cid][sid] {
 			case models.StatusPresent:
 				rd.Present++
 			case models.StatusLate:
@@ -184,9 +206,18 @@ func dailyRollup(classroomIDs []uint, date, weekday string) map[uint]*RoomDaily 
 			case models.StatusExcused:
 				rd.Excused++
 			default:
-				rd.Absent++
+				// No attendance row: excused if on approved leave, else absent.
+				if leaveSet[sid] {
+					rd.Excused++
+				} else {
+					rd.Absent++
+				}
 			}
 		}
+	}
+
+	// Rate over slots (denominator excludes excused); guard against 0/negative.
+	for _, rd := range res {
 		denom := rd.Enrolled - rd.Excused
 		if denom > 0 {
 			rd.Rate = float64(rd.Present+rd.Late) / float64(denom)

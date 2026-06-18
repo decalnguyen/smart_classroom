@@ -19,15 +19,26 @@ func HandleDeviceHeartbeat(c *gin.Context) {
 		Kind         string `json:"kind"`
 		ModelVersion string `json:"model_version"`
 		Status       string `json:"status"`
+		EventID      string `json:"event_id"` // optional
+		Ts           string `json:"ts"`        // event time (RFC3339/epoch) for anti-replay
 	}
 	if err := c.BindJSON(&req); err != nil || req.DeviceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "device_id is required"})
 		return
 	}
+	// Anti-replay: heartbeats must carry a fresh ts (event_id optional here).
+	switch verifyDeviceEvent(req.EventID, req.Ts, false) {
+	case eventBadTS:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Thiếu/sai 'ts' (chống phát lại)"})
+		return
+	case eventStale:
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Heartbeat quá hạn (lệch thời gian)"})
+		return
+	}
 	db.DB.Model(&models.DeviceCredential{}).Where("device_id = ?", req.DeviceID).Update("last_seen", time.Now())
 	// Mark the matching sensor row active (heartbeat).
 	db.DB.Model(&models.Sensor{}).Where("device_id = ?", req.DeviceID).
-		Updates(map[string]interface{}{"timestamp": time.Now(), "status": "Active"})
+		Updates(map[string]interface{}{"timestamp": time.Now(), "status": "active"})
 	c.JSON(http.StatusOK, gin.H{"message": "ok", "device_id": req.DeviceID, "server_time": nowVN().Format(time.RFC3339)})
 }
 

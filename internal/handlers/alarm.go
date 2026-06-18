@@ -3,8 +3,6 @@ package handlers
 import (
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,15 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Danger thresholds (env-configurable). Defaults are tuned for the demo.
-func threshold(key string, fallback float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return fallback
-}
+// Danger thresholds are data-driven and auto-calibrated; see dangerThreshold in
+// threshold_calibration.go (precedence: env override > calibrated μ+Kσ > fallback).
 
 // alertCooldown prevents alert spam: at most one alert per device every window.
 var (
@@ -51,13 +42,13 @@ func EvaluateAndAlert(data models.SenSorData) {
 
 	switch {
 	case strings.Contains(dtype, "smoke") || strings.Contains(dtype, "mq2") || strings.Contains(dtype, "gas"):
-		limit = threshold("SMOKE_THRESHOLD", 300)
+		limit = dangerThreshold("smoke", "SMOKE_THRESHOLD", 300)
 		if data.Value >= limit {
 			breached = true
 			message = fmt.Sprintf("🔥 Phát hiện khói/khí gas vượt ngưỡng tại %s: %.0f (ngưỡng %.0f)", data.DeviceID, data.Value, limit)
 		}
 	case strings.Contains(dtype, "temp"):
-		limit = threshold("TEMP_THRESHOLD", 50)
+		limit = dangerThreshold("temp", "TEMP_THRESHOLD", 50)
 		if data.Value >= limit {
 			breached = true
 			message = fmt.Sprintf("🌡️ Nhiệt độ vượt ngưỡng nguy hiểm tại %s: %.1f°C (ngưỡng %.0f°C)", data.DeviceID, data.Value, limit)

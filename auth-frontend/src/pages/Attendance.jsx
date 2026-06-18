@@ -49,6 +49,7 @@ export default function Attendance() {
   const [students, setStudents] = useState([])
 
   const [rows, setRows] = useState([])
+  const [classInfo, setClassInfo] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [noClass, setNoClass] = useState(false)
@@ -57,7 +58,7 @@ export default function Attendance() {
   // Mark-attendance form state
   const [formStudent, setFormStudent] = useState(null)
   const [formStatus, setFormStatus] = useState('present')
-  const [formDevice, setFormDevice] = useState('A101-cam')
+  const [formDevice, setFormDevice] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   // Realtime face-scan recognition feed (system-wide).
@@ -92,26 +93,17 @@ export default function Attendance() {
     }
   }, [])
 
-  // Load students for the form (staff only).
+  // The manual-attendance form may ONLY target students enrolled in the class
+  // currently in session in this room — i.e. the loaded roster (`rows`), not the
+  // whole school. Keep `students` mirrored to the roster so the picker is scoped.
   useEffect(() => {
-    if (!canEdit) return
-    let active = true
-    ;(async () => {
-      try {
-        const { data } = await schoolApi.getStudents()
-        if (active) setStudents(Array.isArray(data) ? data : [])
-      } catch {
-        /* form is optional */
-      }
-    })()
-    return () => {
-      active = false
-    }
-  }, [canEdit])
+    setStudents(rows)
+  }, [rows])
 
   const loadAttendance = useCallback(async (id) => {
     if (id === '' || id == null) {
       setRows([])
+      setClassInfo(null)
       return
     }
     setLoading(true)
@@ -121,13 +113,16 @@ export default function Attendance() {
       const { data } = await attendanceApi.list(id)
       const list = data && Array.isArray(data.students) ? data.students : Array.isArray(data) ? data : []
       setRows(list)
+      setClassInfo(data?.class || null)
     } catch (err) {
       if (err?.response?.status === 404) {
         setRows([])
+        setClassInfo(null)
         setNoClass(true)
       } else {
         setError(apiError(err, 'Không tải được dữ liệu điểm danh.'))
         setRows([])
+        setClassInfo(null)
       }
     } finally {
       setLoading(false)
@@ -138,18 +133,51 @@ export default function Attendance() {
     loadAttendance(classroomId)
   }, [classroomId, loadAttendance])
 
+  // Edit a record's status / delete it (staff only; only rows with a real id).
+  const editStatus = async (r, newStatus) => {
+    if (!r.id || newStatus === r.status) return
+    try {
+      await attendanceApi.update(r.id, { attendance_status: newStatus })
+      setToast({ severity: 'success', msg: 'Đã cập nhật trạng thái.' })
+      await loadAttendance(classroomId)
+    } catch (err) {
+      setToast({ severity: 'error', msg: apiError(err, 'Cập nhật thất bại.') })
+    }
+  }
+  const removeRow = async (r) => {
+    if (!r.id) return
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Xoá bản ghi điểm danh của ${r.student_name}?`)) return
+    try {
+      await attendanceApi.remove(r.id)
+      setToast({ severity: 'success', msg: 'Đã xoá bản ghi.' })
+      await loadAttendance(classroomId)
+    } catch (err) {
+      setToast({ severity: 'error', msg: apiError(err, 'Xoá thất bại.') })
+    }
+  }
+
   // When a face scan arrives for the selected classroom, refresh the list.
   useEffect(() => {
     if (liveForRoom.length) loadAttendance(classroomId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveForRoom.length])
 
+  // formDevice defaults to "<room>-cam" when classroom changes
+  useEffect(() => {
+    if (classroomId && classroomName[classroomId]) {
+      setFormDevice(classroomName[classroomId] + '-cam')
+    }
+  }, [classroomId, classroomName])
+
   const summary = useMemo(() => {
     const total = rows.length
-    const present = rows.filter((r) => r.status === 'present').length
     const late = rows.filter((r) => r.status === 'late').length
+    const presentOnly = rows.filter((r) => r.status === 'present').length
     const excused = rows.filter((r) => r.status === 'excused').length
-    return { total, present, late, excused, absent: total - present - late - excused }
+    const absent = rows.filter((r) => r.status === 'absent').length
+    // "Có mặt" = ai có mặt dù đúng giờ hay muộn
+    return { total, present: presentOnly + late, late, excused, absent }
   }, [rows])
 
   const handleSubmit = async () => {
@@ -216,7 +244,9 @@ export default function Attendance() {
         <CardContent>
           <Stack direction="row" alignItems="center" spacing={1} mb={1}>
             <FaceRetouchingNaturalIcon color="primary" />
-            <Typography variant="h6">Nhận diện khuôn mặt (thời gian thực)</Typography>
+            <Typography variant="h6">
+              Nhận diện khuôn mặt (thời gian thực){classroomName[classroomId] ? ` · ${classroomName[classroomId]}` : ''}
+            </Typography>
             <Chip
               size="small"
               label={liveStatus === 'open' ? 'Đang nhận' : 'Ngoại tuyến'}
@@ -225,16 +255,16 @@ export default function Attendance() {
             />
           </Stack>
           <Divider sx={{ mb: 1 }} />
-          {events.length === 0 ? (
+          {liveForRoom.length === 0 ? (
             <EmptyState
               dense
               icon={<FaceRetouchingNaturalIcon />}
               title="Đang chờ camera nhận diện"
-              description="Hệ thống sẽ tự động cập nhật khi camera nhận diện được học sinh."
+              description="Hệ thống sẽ tự động cập nhật khi camera nhận diện được học sinh trong phòng này."
             />
           ) : (
             <Stack spacing={1} sx={{ maxHeight: 240, overflow: 'auto' }}>
-              {events.slice(0, 15).map((e, i) => (
+              {liveForRoom.slice(0, 15).map((e, i) => (
                 <Stack
                   key={`${e.student_id}-${e._ts}-${i}`}
                   direction="row"
@@ -248,11 +278,22 @@ export default function Attendance() {
                     bgcolor: 'action.hover',
                   }}
                 >
-                  <Chip size="small" color="success" label="✓ Có mặt" />
+                  {e.face_image && (
+                    <Box
+                      component="img"
+                      src={`data:image/jpeg;base64,${e.face_image}`}
+                      alt={e.student_name}
+                      sx={{ width: 44, height: 44, borderRadius: 1, objectFit: 'cover', flexShrink: 0 }}
+                    />
+                  )}
+                  {e.attendance_status === 'late' ? (
+                    <Chip size="small" color="warning" label="⏱ Đi muộn" />
+                  ) : (
+                    <Chip size="small" color="success" label="✓ Có mặt" />
+                  )}
                   <Typography variant="body2" fontWeight={600}>
                     {e.student_name}
                   </Typography>
-                  <Chip size="small" variant="outlined" label={classroomName[e.classroom_id] || `Phòng ${e.classroom_id}`} />
                   <Typography variant="caption" color="text.secondary">
                     MSSV {e.mssv} · {e.subject} · {e.detection_time}
                   </Typography>
@@ -263,13 +304,20 @@ export default function Attendance() {
         </CardContent>
       </Card>
 
-      {/* Mark-attendance form (staff only) */}
+      {/* Mark-attendance form (staff only) — scoped to the ongoing class roster */}
       {canEdit && (
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" mb={2}>
-              Ghi nhận điểm danh thủ công
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1} mb={2} flexWrap="wrap">
+              <Typography variant="h6">Ghi nhận điểm danh thủ công</Typography>
+              {classInfo && (
+                <Chip size="small" variant="outlined" color="primary"
+                  label={`${classInfo.subject}${classInfo.period ? ` · Tiết ${classInfo.period}` : ''}${classInfo.time ? ` · ${classInfo.time}` : ''}`} />
+              )}
+            </Stack>
+            {noClass ? (
+              <Alert severity="info">Hiện không có tiết học đang diễn ra trong phòng này — không thể ghi nhận điểm danh.</Alert>
+            ) : (
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
               <Autocomplete
                 size="small"
@@ -279,7 +327,8 @@ export default function Attendance() {
                 onChange={(_, v) => setFormStudent(v)}
                 getOptionLabel={(s) => (s ? `${s.mssv || s.student_id} - ${s.student_name}` : '')}
                 isOptionEqualToValue={(o, v) => o.student_id === v.student_id}
-                renderInput={(params) => <TextField {...params} label="Sinh viên (tìm theo MSSV/tên)" />}
+                noOptionsText="Không có sinh viên trong lớp này"
+                renderInput={(params) => <TextField {...params} label="Sinh viên trong lớp (MSSV/tên)" />}
               />
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel id="status-select-label">Trạng thái</InputLabel>
@@ -302,10 +351,11 @@ export default function Attendance() {
                 onChange={(e) => setFormDevice(e.target.value)}
                 sx={{ minWidth: 160 }}
               />
-              <Button variant="contained" onClick={handleSubmit} disabled={submitting || !classrooms.length}>
+              <Button variant="contained" onClick={handleSubmit} disabled={submitting || !classrooms.length || !students.length}>
                 {submitting ? 'Đang lưu...' : 'Ghi nhận'}
               </Button>
             </Stack>
+            )}
           </CardContent>
         </Card>
       )}
@@ -313,9 +363,13 @@ export default function Attendance() {
       {/* Attendance table */}
       <Card>
         <CardContent>
-          <Typography variant="h6" mb={2}>
-            Danh sách điểm danh
-          </Typography>
+          <Stack direction="row" alignItems="center" spacing={1} mb={2} flexWrap="wrap">
+            <Typography variant="h6">Danh sách điểm danh</Typography>
+            {classInfo && (
+              <Chip size="small" variant="outlined" color="primary"
+                label={`${classInfo.subject}${classInfo.period ? ` · Tiết ${classInfo.period}` : ''}${classInfo.time ? ` · ${classInfo.time}` : ''}`} />
+            )}
+          </Stack>
           {loading ? (
             <Stack spacing={1}>
               {Array.from({ length: 6 }).map((_, i) => (
@@ -348,6 +402,7 @@ export default function Attendance() {
                     <TableCell>Trạng thái</TableCell>
                     <TableCell>SĐT</TableCell>
                     <TableCell>Email</TableCell>
+                    {canEdit && <TableCell align="right">Thao tác</TableCell>}
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -368,6 +423,28 @@ export default function Attendance() {
                       </TableCell>
                       <TableCell>{r.phone || '—'}</TableCell>
                       <TableCell>{r.email || '—'}</TableCell>
+                      {canEdit && (
+                        <TableCell align="right">
+                          {r.id ? (
+                            <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                              <Select
+                                size="small"
+                                value={r.status}
+                                onChange={(e) => editStatus(r, e.target.value)}
+                                sx={{ minWidth: 120 }}
+                              >
+                                <MenuItem value="present">Có mặt</MenuItem>
+                                <MenuItem value="late">Đi muộn</MenuItem>
+                                <MenuItem value="excused">Có phép</MenuItem>
+                                <MenuItem value="absent">Vắng</MenuItem>
+                              </Select>
+                              <Button size="small" color="error" onClick={() => removeRow(r)}>Xoá</Button>
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">—</Typography>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

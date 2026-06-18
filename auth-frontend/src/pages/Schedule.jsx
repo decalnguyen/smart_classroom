@@ -13,19 +13,23 @@ import {
   Snackbar,
   Chip,
   Skeleton,
+  IconButton,
+  Tooltip,
 } from '@mui/material'
 import { useTheme, alpha } from '@mui/material/styles'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import RoomIcon from '@mui/icons-material/Room'
 import AddIcon from '@mui/icons-material/Add'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import { scheduleApi, apiError } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 
-// NOTE: scheduleApi.getWeekly() returns sessions WITHOUT ids, so this view
-// only supports adding + viewing. Editing / deleting individual sessions is
-// not possible here — do NOT call scheduleApi.remove from this page.
+// Personal sessions (returned with an id + editable:true) can be edited/deleted
+// here; class-derived sessions (editable:false, no id) are read-only.
 
 // Backend day keys (Monday..Sunday) mapped to Vietnamese column labels.
 // Each day gets an accent color (icons / header chip / card border only).
@@ -50,12 +54,17 @@ const BOARD_COLS = {
 
 export default function Schedule() {
   const theme = useTheme()
+  const { role } = useAuth()
+  const isTeacher = role === 'teacher'
+  const isAdmin = role === 'admin'
   const [weekly, setWeekly] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [form, setForm] = useState(emptyForm)
+  const [editingId, setEditingId] = useState(null) // null = create mode
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState(null)
+  const [roomFilter, setRoomFilter] = useState('all') // admin room-usage filter
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -85,32 +94,83 @@ export default function Schedule() {
       return
     }
     setSubmitting(true)
+    const payload = {
+      title: form.title.trim(),
+      desc: form.desc.trim(),
+      room: form.room.trim(),
+      day: form.day,
+      time: form.time.trim(),
+    }
     try {
-      await scheduleApi.create({
-        title: form.title.trim(),
-        desc: form.desc.trim(),
-        room: form.room.trim(),
-        day: form.day,
-        time: form.time.trim(),
-      })
-      setToast({ severity: 'success', msg: 'Đã thêm tiết học.' })
+      if (editingId != null) {
+        await scheduleApi.update(editingId, payload)
+        setToast({ severity: 'success', msg: 'Đã cập nhật tiết học.' })
+      } else {
+        await scheduleApi.create(payload)
+        setToast({ severity: 'success', msg: 'Đã thêm tiết học.' })
+      }
       setForm(emptyForm)
+      setEditingId(null)
       await load()
     } catch (err) {
-      setToast({ severity: 'error', msg: apiError(err, 'Thêm tiết học thất bại.') })
+      setToast({ severity: 'error', msg: apiError(err, 'Lưu tiết học thất bại.') })
     } finally {
       setSubmitting(false)
     }
   }
 
-  // Total sessions across the whole week (for the empty state).
+  // Start editing a personal session: prefill the form (do NOT send id/account_id).
+  const startEdit = (dayKey, s) => {
+    setEditingId(s.id)
+    setForm({ day: dayKey, time: s.time || '', title: s.title || '', room: s.room || '', desc: s.desc || '' })
+    if (typeof window !== 'undefined') window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
+  }
+  const cancelEdit = () => {
+    setEditingId(null)
+    setForm(emptyForm)
+  }
+  const removeSession = async (s) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Xoá tiết "${s.title || 'tiết học'}"?`)) return
+    try {
+      await scheduleApi.remove(s.id)
+      setToast({ severity: 'success', msg: 'Đã xoá tiết học.' })
+      if (editingId === s.id) cancelEdit()
+      await load()
+    } catch (err) {
+      setToast({ severity: 'error', msg: apiError(err, 'Xoá tiết học thất bại.') })
+    }
+  }
+
+  // Distinct rooms across the week (admin room-usage filter).
+  const roomList = weekly
+    ? [...new Set(DAYS.flatMap((d) => (Array.isArray(weekly[d.key]) ? weekly[d.key] : []).map((s) => s.room).filter(Boolean)))].sort()
+    : []
+
+  // Sessions for a day, applying the admin room filter.
+  const sessionsForDay = (dayKey) => {
+    const list = Array.isArray(weekly?.[dayKey]) ? weekly[dayKey] : []
+    if (isAdmin && roomFilter !== 'all') return list.filter((s) => s.room === roomFilter)
+    return list
+  }
+
+  // Total sessions across the whole week (for the empty state; respects filter).
   const totalSessions = weekly
-    ? DAYS.reduce((sum, d) => sum + (Array.isArray(weekly[d.key]) ? weekly[d.key].length : 0), 0)
+    ? DAYS.reduce((sum, d) => sum + sessionsForDay(d.key).length, 0)
     : 0
 
   return (
     <Box>
-      <PageHeader title="Lịch học cá nhân" subtitle="Thời khóa biểu theo tài khoản" />
+      <PageHeader
+        title={isAdmin ? 'Lịch sử dụng phòng học' : isTeacher ? 'Lịch dạy' : 'Lịch học cá nhân'}
+        subtitle={isAdmin ? 'Thời khóa biểu tất cả phòng học trong tuần (môn · tiết · phòng · GV)' : isTeacher ? 'Thời khóa biểu giảng dạy + tiết cá nhân' : 'Thời khóa biểu theo tài khoản'}
+        action={isAdmin && roomList.length ? (
+          <TextField select size="small" label="Phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} sx={{ minWidth: 160 }}>
+            <MenuItem value="all">Tất cả phòng</MenuItem>
+            {roomList.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+          </TextField>
+        ) : undefined}
+      />
 
       {/* Week board */}
       {loading ? (
@@ -148,7 +208,7 @@ export default function Schedule() {
             <EmptyState
               icon={<CalendarMonthIcon />}
               title="Chưa có tiết học nào"
-              description="Tuần này chưa có tiết học. Hãy thêm tiết học ở biểu mẫu bên dưới."
+              description={isAdmin ? 'Chưa có lớp học nào trong thời khóa biểu. Thêm lớp ở trang Quản trị.' : 'Tuần này chưa có tiết học. Hãy thêm tiết học ở biểu mẫu bên dưới.'}
               dense
             />
           </CardContent>
@@ -163,7 +223,7 @@ export default function Schedule() {
           }}
         >
           {DAYS.map((d) => {
-            const sessions = Array.isArray(weekly[d.key]) ? weekly[d.key] : []
+            const sessions = sessionsForDay(d.key)
             return (
               <Box key={d.key}>
                 {/* Subtle colored header chip per day */}
@@ -215,6 +275,20 @@ export default function Schedule() {
                             <Typography variant="caption" color="text.secondary">
                               {s.time || '--'}
                             </Typography>
+                            {s.editable && s.id != null && (
+                              <Stack direction="row" spacing={0} sx={{ ml: 'auto' }}>
+                                <Tooltip title="Sửa">
+                                  <IconButton size="small" onClick={() => startEdit(d.key, s)}>
+                                    <EditIcon sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Xoá">
+                                  <IconButton size="small" color="error" onClick={() => removeSession(s)}>
+                                    <DeleteIcon sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              </Stack>
+                            )}
                           </Stack>
                           <Typography variant="body2" fontWeight={600} color="text.primary">
                             {s.title || 'Tiết học'}
@@ -248,11 +322,13 @@ export default function Schedule() {
         </Box>
       )}
 
-      {/* Add session form (any role can add their own) */}
+      {/* Add session form — personal timetable (students/teachers only). Admin's
+          room-usage view is managed via the Quản trị (classes) page, not here. */}
+      {!isAdmin && (
       <Card>
         <CardContent>
           <Typography variant="h6" mb={2}>
-            Thêm tiết học
+            {editingId != null ? 'Sửa tiết học' : 'Thêm tiết học'}
           </Typography>
           <Box component="form" onSubmit={handleSubmit}>
             <Box
@@ -305,17 +381,23 @@ export default function Schedule() {
                 sx={{ gridColumn: { sm: 'span 2', md: 'span 2' } }}
               />
             </Box>
-            <Button
-              type="submit"
-              variant="contained"
-              startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : <AddIcon />}
-              disabled={submitting}
-            >
-              {submitting ? 'Đang thêm...' : 'Thêm tiết học'}
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button
+                type="submit"
+                variant="contained"
+                startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : editingId != null ? <EditIcon /> : <AddIcon />}
+                disabled={submitting}
+              >
+                {submitting ? 'Đang lưu...' : editingId != null ? 'Cập nhật' : 'Thêm tiết học'}
+              </Button>
+              {editingId != null && (
+                <Button variant="text" onClick={cancelEdit} disabled={submitting}>Huỷ</Button>
+              )}
+            </Stack>
           </Box>
         </CardContent>
       </Card>
+      )}
 
       <Snackbar
         open={Boolean(toast)}
