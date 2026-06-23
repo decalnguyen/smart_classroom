@@ -368,9 +368,15 @@ func HandleReviewDecision(c *gin.Context) {
 		aid := uuid.New().String()
 		cid := fr.ClassID
 		subj := fr.Subject
+		// Apply the same late policy as live scans: present within grace, else late.
+		status := models.StatusPresent
+		var cl models.Class
+		if db.DB.First(&cl, fr.ClassID).Error == nil {
+			status = checkinStatus(cl)
+		}
 		att := models.Attendance{
 			ID: &aid, StudentID: fr.StudentID, ClassroomID: fr.ClassroomID, ClassID: &cid, Subject: &subj,
-			Date: fr.Date, AttendanceStatus: models.StatusPresent, DetectionTime: fr.DetectionTime, DeviceID: fr.DeviceID,
+			Date: fr.Date, AttendanceStatus: status, DetectionTime: fr.DetectionTime, DeviceID: fr.DeviceID,
 		}
 		db.DB.Where("student_id = ? AND class_id = ? AND date = ?", fr.StudentID, fr.ClassID, fr.Date).
 			FirstOrCreate(&att)

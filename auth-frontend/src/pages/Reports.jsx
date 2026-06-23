@@ -344,7 +344,7 @@ export default function Reports() {
                       <XAxis dataKey="date" tick={axisTick} />
                       <YAxis tick={axisTick} allowDecimals={false} />
                       <RTooltip contentStyle={{ background: theme.palette.background.paper, border: `1px solid ${theme.palette.divider}`, borderRadius: 8 }} />
-                      <Line type="monotone" dataKey="present" name="Lượt có mặt" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="present" name="Lượt tham gia (có mặt + muộn)" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}

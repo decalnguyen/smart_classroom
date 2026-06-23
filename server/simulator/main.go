@@ -160,17 +160,21 @@ func postScan(scanURL string, classroomID int, status string) {
 	log.Printf("face-scan classroom %d (%s) -> %d", classroomID, status, code)
 }
 
-// scanLoop periodically simulates successful face scans across classrooms,
-// with ~15% of recognitions flagged as "late".
-func scanLoop(scanURL string, every time.Duration, maxClassroom int) {
+// scanLoop periodically simulates successful face scans for the given classroom
+// IDs (rooms with a REAL camera are excluded by the caller), ~15% flagged "late".
+func scanLoop(scanURL string, every time.Duration, classrooms []int) {
 	time.Sleep(12 * time.Second) // let mock data seed first
+	if len(classrooms) == 0 {
+		log.Printf("scanLoop: no classrooms to simulate (all excluded) — face-scan off")
+		return
+	}
 	rng := rand.New(rand.NewSource(7))
 	for {
 		status := "present"
 		if rng.Float64() < 0.15 {
 			status = "late"
 		}
-		postScan(scanURL, 1+rng.Intn(maxClassroom), status)
+		postScan(scanURL, classrooms[rng.Intn(len(classrooms))], status)
 		time.Sleep(every)
 	}
 }
@@ -210,15 +214,30 @@ func main() {
 		}
 	}
 
+	// Classrooms with a REAL camera (Jetson) — skip simulated FACE-SCANS so they
+	// don't pollute the real recognition feed. Default: A101 (classroom_id 1).
+	scanExclude := map[int]bool{}
+	for _, s := range strings.Split(env("SCAN_EXCLUDE_CLASSROOMS", "1"), ",") {
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			scanExclude[n] = true
+		}
+	}
+	scanRooms := make([]int, 0, roomCount)
+	for id := 1; id <= roomCount; id++ {
+		if !scanExclude[id] {
+			scanRooms = append(scanRooms, id)
+		}
+	}
+
 	if transport == "mqtt" {
 		initMQTT()
 	}
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	log.Printf("simulator sensors via %s for %d rooms (excluded: %s); face-scan via HTTP %s", transport, len(rooms), excludeCSV, scanURL)
+	log.Printf("simulator sensors via %s for %d rooms (excluded: %s); face-scan for classrooms %v (excluded camera rooms)", transport, len(rooms), excludeCSV, scanRooms)
 
-	// Background: simulate successful face scans -> realtime attendance.
-	go scanLoop(scanURL, scanEvery, roomCount)
+	// Background: simulate successful face scans -> realtime attendance (camera rooms excluded).
+	go scanLoop(scanURL, scanEvery, scanRooms)
 
 	// Give the API time to come up.
 	time.Sleep(8 * time.Second)

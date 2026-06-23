@@ -73,6 +73,7 @@ func main() {
 		auth.GET("/my/classrooms", handlers.HandleMyClassrooms)
 		auth.GET("/my/attendance", handlers.HandleMyAttendance)
 		auth.GET("/classrooms/overview", handlers.HandleClassroomsOverview)
+		auth.GET("/classes-today", handlers.HandleClassesToday)
 		auth.GET("/semesters", handlers.HandleGetSemesters)
 		auth.GET("/holidays", handlers.HandleGetHolidays)
 
@@ -88,7 +89,6 @@ func main() {
 		auth.GET("/classes/:id", handlers.HandleGetClass)
 		auth.GET("/students", handlers.HandleGetStudents)
 		auth.GET("/teachers", handlers.HandleGetTeachers)
-		auth.GET("/attendance", handlers.HandleGetAttendance)
 		auth.GET("/electricity", handlers.HandleGetElectricity)
 
 		// Personal schedule (own data, any role).
@@ -108,6 +108,7 @@ func main() {
 	staff.Use(middleware.RequireRole("admin", "teacher"))
 	{
 		// Attendance management.
+		staff.GET("/attendance", handlers.HandleGetAttendance) // roster of an ongoing class — staff only
 		staff.POST("/attendance", handlers.HandlePostAttendance)
 		staff.PUT("/attendance/:id", handlers.HandlePutAttendance)
 		staff.DELETE("/attendance/:id", handlers.HandleDeleteAttendance)

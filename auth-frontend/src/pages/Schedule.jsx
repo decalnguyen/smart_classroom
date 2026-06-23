@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Box,
   Card,
@@ -15,10 +15,13 @@ import {
   Skeleton,
   IconButton,
   Tooltip,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material'
 import { useTheme, alpha } from '@mui/material/styles'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import RoomIcon from '@mui/icons-material/Room'
+import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -65,6 +68,9 @@ export default function Schedule() {
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState(null)
   const [roomFilter, setRoomFilter] = useState('all') // admin room-usage filter
+  // 'day' = week board (per weekday); 'room' = grouped by classroom. Admin's
+  // room-usage view defaults to by-room (easier to read which room is used when).
+  const [viewMode, setViewMode] = useState(isAdmin ? 'room' : 'day')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -159,17 +165,104 @@ export default function Schedule() {
     ? DAYS.reduce((sum, d) => sum + sessionsForDay(d.key).length, 0)
     : 0
 
+  // Accent color for a day key (room view borders/chips).
+  const dayColor = (key) => DAYS.find((d) => d.key === key)?.color || theme.palette.primary.main
+
+  // Group every session by classroom (room view). Respects the admin room filter.
+  // Each room → its days that have sessions, each day's sessions sorted by time.
+  const byRoom = useMemo(() => {
+    if (!weekly) return []
+    const map = {}
+    DAYS.forEach((d) => {
+      let list = Array.isArray(weekly[d.key]) ? weekly[d.key] : []
+      if (isAdmin && roomFilter !== 'all') list = list.filter((s) => s.room === roomFilter)
+      list.forEach((s) => {
+        const room = s.room || 'Chưa gán phòng'
+        if (!map[room]) map[room] = {}
+        if (!map[room][d.key]) map[room][d.key] = []
+        map[room][d.key].push(s)
+      })
+    })
+    return Object.keys(map)
+      .sort()
+      .map((room) => ({
+        room,
+        count: Object.values(map[room]).reduce((n, arr) => n + arr.length, 0),
+        days: DAYS.filter((d) => map[room][d.key]?.length).map((d) => ({
+          ...d,
+          sessions: [...map[room][d.key]].sort((a, b) => (a.time || '').localeCompare(b.time || '')),
+        })),
+      }))
+  }, [weekly, roomFilter, isAdmin])
+
+  // One session card, shared by both views. showRoom=false in room view (redundant).
+  const renderSessionCard = (s, dayKey, color, keyStr, showRoom = true) => (
+    <Card
+      key={keyStr}
+      variant="outlined"
+      sx={{
+        borderLeft: 4,
+        borderLeftColor: color,
+        bgcolor: 'background.paper',
+        transition: 'box-shadow .15s, border-color .15s',
+        '&:hover': { boxShadow: 2 },
+      }}
+    >
+      <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+          <AccessTimeIcon fontSize="small" sx={{ color }} />
+          <Typography variant="caption" color="text.secondary">
+            {s.time || '--'}
+          </Typography>
+          {s.editable && s.id != null && (
+            <Stack direction="row" spacing={0} sx={{ ml: 'auto' }}>
+              <Tooltip title="Sửa">
+                <IconButton size="small" onClick={() => startEdit(dayKey, s)}>
+                  <EditIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Xoá">
+                <IconButton size="small" color="error" onClick={() => removeSession(s)}>
+                  <DeleteIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          )}
+        </Stack>
+        <Typography variant="body2" fontWeight={600} color="text.primary">
+          {s.title || 'Tiết học'}
+        </Typography>
+        {showRoom && s.room ? (
+          <Chip size="small" icon={<RoomIcon />} label={s.room} variant="outlined" sx={{ mt: 0.5 }} />
+        ) : null}
+        {s.desc ? (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {s.desc}
+          </Typography>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+
   return (
     <Box>
       <PageHeader
         title={isAdmin ? 'Lịch sử dụng phòng học' : isTeacher ? 'Lịch dạy' : 'Lịch học cá nhân'}
         subtitle={isAdmin ? 'Thời khóa biểu tất cả phòng học trong tuần (môn · tiết · phòng · GV)' : isTeacher ? 'Thời khóa biểu giảng dạy + tiết cá nhân' : 'Thời khóa biểu theo tài khoản'}
-        action={isAdmin && roomList.length ? (
-          <TextField select size="small" label="Phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} sx={{ minWidth: 160 }}>
-            <MenuItem value="all">Tất cả phòng</MenuItem>
-            {roomList.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
-          </TextField>
-        ) : undefined}
+        action={
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+            <ToggleButtonGroup size="small" exclusive value={viewMode} onChange={(_, v) => v && setViewMode(v)}>
+              <ToggleButton value="day">Theo thứ</ToggleButton>
+              <ToggleButton value="room">Theo phòng</ToggleButton>
+            </ToggleButtonGroup>
+            {isAdmin && roomList.length ? (
+              <TextField select size="small" label="Phòng" value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} sx={{ minWidth: 160 }}>
+                <MenuItem value="all">Tất cả phòng</MenuItem>
+                {roomList.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+              </TextField>
+            ) : null}
+          </Stack>
+        }
       />
 
       {/* Week board */}
@@ -213,6 +306,53 @@ export default function Schedule() {
             />
           </CardContent>
         </Card>
+      ) : viewMode === 'room' ? (
+        /* Grouped by classroom: one card per room, days with sessions inside. */
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' },
+            mb: 4,
+          }}
+        >
+          {byRoom.map((r) => (
+            <Card key={r.room} variant="outlined" sx={{ overflow: 'hidden' }}>
+              <Box
+                sx={{
+                  px: 2,
+                  py: 1.25,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  bgcolor: alpha(theme.palette.primary.main, 0.1),
+                  borderBottom: 1,
+                  borderColor: 'divider',
+                }}
+              >
+                <MeetingRoomIcon fontSize="small" color="primary" />
+                <Typography variant="subtitle1" fontWeight={700}>{r.room}</Typography>
+                <Chip size="small" label={`${r.count} tiết`} sx={{ ml: 'auto' }} />
+              </Box>
+              <CardContent sx={{ p: 1.5 }}>
+                <Stack spacing={1.5}>
+                  {r.days.map((d) => (
+                    <Box key={d.key}>
+                      <Typography variant="caption" fontWeight={700} sx={{ color: d.color, display: 'block', mb: 0.5 }}>
+                        {d.label}
+                      </Typography>
+                      <Stack spacing={1}>
+                        {d.sessions.map((s, i) =>
+                          renderSessionCard(s, d.key, d.color, `${r.room}-${d.key}-${s.time}-${s.title}-${i}`, false),
+                        )}
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              </CardContent>
+            </Card>
+          ))}
+        </Box>
       ) : (
         <Box
           sx={{
@@ -257,63 +397,9 @@ export default function Schedule() {
                       Không có tiết
                     </Typography>
                   ) : (
-                    sessions.map((s, i) => (
-                      <Card
-                        key={`${d.key}-${s.time}-${s.title}-${i}`}
-                        variant="outlined"
-                        sx={{
-                          borderLeft: 4,
-                          borderLeftColor: d.color,
-                          bgcolor: 'background.paper',
-                          transition: 'box-shadow .15s, border-color .15s',
-                          '&:hover': { boxShadow: 2 },
-                        }}
-                      >
-                        <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
-                            <AccessTimeIcon fontSize="small" sx={{ color: d.color }} />
-                            <Typography variant="caption" color="text.secondary">
-                              {s.time || '--'}
-                            </Typography>
-                            {s.editable && s.id != null && (
-                              <Stack direction="row" spacing={0} sx={{ ml: 'auto' }}>
-                                <Tooltip title="Sửa">
-                                  <IconButton size="small" onClick={() => startEdit(d.key, s)}>
-                                    <EditIcon sx={{ fontSize: 16 }} />
-                                  </IconButton>
-                                </Tooltip>
-                                <Tooltip title="Xoá">
-                                  <IconButton size="small" color="error" onClick={() => removeSession(s)}>
-                                    <DeleteIcon sx={{ fontSize: 16 }} />
-                                  </IconButton>
-                                </Tooltip>
-                              </Stack>
-                            )}
-                          </Stack>
-                          <Typography variant="body2" fontWeight={600} color="text.primary">
-                            {s.title || 'Tiết học'}
-                          </Typography>
-                          {s.room ? (
-                            <Chip
-                              size="small"
-                              icon={<RoomIcon />}
-                              label={s.room}
-                              variant="outlined"
-                              sx={{ mt: 0.5 }}
-                            />
-                          ) : null}
-                          {s.desc ? (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ display: 'block', mt: 0.5 }}
-                            >
-                              {s.desc}
-                            </Typography>
-                          ) : null}
-                        </CardContent>
-                      </Card>
-                    ))
+                    sessions.map((s, i) =>
+                      renderSessionCard(s, d.key, d.color, `${d.key}-${s.time}-${s.title}-${i}`, true),
+                    )
                   )}
                 </Stack>
               </Box>

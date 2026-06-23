@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"sort"
+	"time"
 
 	"smart_classroom/internal/db"
 	"smart_classroom/internal/models"
@@ -98,45 +100,43 @@ func notifyTeachersForLeave(student models.Student, lr models.LeaveRequest) {
 }
 
 // HandleListLeaves — students see their own; teacher sees leaves for students in
-// their assigned classrooms; admin sees all.
+// their assigned classrooms; admin sees all. Each leave is enriched with the
+// CLASS(ES) the student misses that day (phòng / môn / tiết / giờ), scoped to the
+// viewer (teacher → only their classes), so the page can group by lớp/phòng/giờ.
 func HandleListLeaves(c *gin.Context) {
 	role := c.GetString("role")
 	q := db.DB.Model(&models.LeaveRequest{}).Order("created_at desc")
+
+	var scopeClassroomIDs []uint // teacher: limit affected-classes to their rooms
+	teacherScoped := false
 
 	switch role {
 	case "student":
 		q = q.Where("account_id = ?", c.GetString("account_id"))
 	case "teacher":
-		// Scope to students enrolled in the teacher's classrooms.
 		var teacher models.Teacher
 		if err := db.DB.Where("account_id = ?", c.GetString("account_id")).First(&teacher).Error; err == nil {
-			var classroomIDs []uint
-			db.DB.Model(&models.ClassroomTeacher{}).
-				Where("teacher_id = ?", teacher.TeacherID).
-				Pluck("classroom_id", &classroomIDs)
-			if len(classroomIDs) > 0 {
-				var studentIDs []uint
-				db.DB.Table("class_students cs").
-					Joins("JOIN classes c ON c.class_id = cs.class_id").
-					Where("c.classroom_id IN ?", classroomIDs).
-					Distinct("cs.student_id").
-					Pluck("cs.student_id", &studentIDs)
-				if len(studentIDs) > 0 {
-					q = q.Where("student_id IN ?", studentIDs)
-				} else {
-					c.JSON(http.StatusOK, []models.LeaveRequest{})
-					return
-				}
-			} else {
-				c.JSON(http.StatusOK, []models.LeaveRequest{})
+			db.DB.Model(&models.ClassroomTeacher{}).Where("teacher_id = ?", teacher.TeacherID).Pluck("classroom_id", &scopeClassroomIDs)
+			teacherScoped = true
+			if len(scopeClassroomIDs) == 0 {
+				c.JSON(http.StatusOK, []gin.H{})
 				return
 			}
+			var studentIDs []uint
+			db.DB.Table("class_students cs").
+				Joins("JOIN classes c ON c.class_id = cs.class_id").
+				Where("c.classroom_id IN ?", scopeClassroomIDs).
+				Distinct("cs.student_id").Pluck("cs.student_id", &studentIDs)
+			if len(studentIDs) == 0 {
+				c.JSON(http.StatusOK, []gin.H{})
+				return
+			}
+			q = q.Where("student_id IN ?", studentIDs)
 		}
 		if s := c.Query("status"); s != "" {
 			q = q.Where("status = ?", s)
 		}
 	default:
-		// admin: see all, optional status filter
 		if s := c.Query("status"); s != "" {
 			q = q.Where("status = ?", s)
 		}
@@ -144,7 +144,67 @@ func HandleListLeaves(c *gin.Context) {
 
 	var rows []models.LeaveRequest
 	q.Limit(500).Find(&rows)
-	c.JSON(http.StatusOK, rows)
+
+	// Affected classes per student, per weekday (room/subject/period/time).
+	studentIDs := make([]uint, 0, len(rows))
+	seen := map[uint]bool{}
+	for _, r := range rows {
+		if !seen[r.StudentID] {
+			seen[r.StudentID] = true
+			studentIDs = append(studentIDs, r.StudentID)
+		}
+	}
+	type ci struct {
+		StudentID uint
+		DayOfWeek string
+		Classroom string
+		Subject   string
+		Period    int
+		StartMin  int
+		EndMin    int
+	}
+	byStudentDay := map[uint]map[string][]gin.H{}
+	if len(studentIDs) > 0 {
+		cq := db.DB.Table("class_students cs").
+			Select("cs.student_id, c.day_of_week, cr.classroom_name as classroom, c.subject, c.period, c.start_min, c.end_min").
+			Joins("JOIN classes c ON c.class_id = cs.class_id").
+			Joins("JOIN classrooms cr ON cr.classroom_id = c.classroom_id").
+			Where("cs.student_id IN ?", studentIDs)
+		if teacherScoped {
+			cq = cq.Where("c.classroom_id IN ?", scopeClassroomIDs)
+		}
+		var cis []ci
+		cq.Scan(&cis)
+		for _, x := range cis {
+			if byStudentDay[x.StudentID] == nil {
+				byStudentDay[x.StudentID] = map[string][]gin.H{}
+			}
+			byStudentDay[x.StudentID][x.DayOfWeek] = append(byStudentDay[x.StudentID][x.DayOfWeek], gin.H{
+				"classroom": x.Classroom, "subject": x.Subject, "period": x.Period,
+				"start_min": x.StartMin,
+				"time":      fmt.Sprintf("%02d:%02d–%02d:%02d", x.StartMin/60, x.StartMin%60, x.EndMin/60, x.EndMin%60),
+			})
+		}
+	}
+
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		weekday := ""
+		if t, err := time.Parse("2006-01-02", r.Date); err == nil {
+			weekday = t.Weekday().String()
+		}
+		classes := byStudentDay[r.StudentID][weekday]
+		sort.Slice(classes, func(i, j int) bool {
+			return classes[i]["start_min"].(int) < classes[j]["start_min"].(int)
+		})
+		out = append(out, gin.H{
+			"id": r.ID, "student_id": r.StudentID, "student_name": r.StudentName,
+			"account_id": r.AccountID, "date": r.Date, "reason": r.Reason,
+			"status": r.Status, "reviewed_by": r.ReviewedBy, "created_at": r.CreatedAt,
+			"classes": classes,
+		})
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // HandleReviewLeave — staff approve/reject. Approved leaves become "excused" in
@@ -162,6 +222,23 @@ func HandleReviewLeave(c *gin.Context) {
 	if err := db.DB.First(&lr, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy đơn"})
 		return
+	}
+	// A teacher may only review leaves of students enrolled in their assigned rooms.
+	if c.GetString("role") == "teacher" {
+		var teacher models.Teacher
+		var scopeIDs []uint
+		if db.DB.Where("account_id = ?", c.GetString("account_id")).First(&teacher).Error == nil {
+			db.DB.Model(&models.ClassroomTeacher{}).Where("teacher_id = ?", teacher.TeacherID).Pluck("classroom_id", &scopeIDs)
+		}
+		var n int64
+		if len(scopeIDs) > 0 {
+			db.DB.Table("class_students cs").Joins("JOIN classes c ON c.class_id = cs.class_id").
+				Where("c.classroom_id IN ? AND cs.student_id = ?", scopeIDs, lr.StudentID).Count(&n)
+		}
+		if n == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không được phân công học sinh này"})
+			return
+		}
 	}
 	now := nowVN()
 	db.DB.Model(&lr).Updates(map[string]interface{}{

@@ -39,6 +39,8 @@ export const authApi = {
 export const statsApi = {
   overview: () => client.get('/stats/overview'),
   classroomsOverview: () => client.get('/classrooms/overview'),
+  // Caller's classes TODAY up to now, split { ongoing, ended } with attendance.
+  classesToday: () => client.get('/classes-today'),
 }
 
 // ---- Attendance reports / analytics ----

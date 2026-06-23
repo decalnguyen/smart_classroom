@@ -73,6 +73,10 @@ func HandleCreateMakeup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "class_id và date là bắt buộc"})
 		return
 	}
+	if m.EndMin <= m.StartMin || m.StartMin < 0 || m.EndMin > 1440 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Khung giờ không hợp lệ (end_min phải lớn hơn start_min)"})
+		return
+	}
 	if err := db.DB.Create(&m).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không tạo được buổi bù"})
 		return

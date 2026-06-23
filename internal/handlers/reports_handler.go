@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,7 +147,10 @@ func scopedClassroomIDs(c *gin.Context) (ids []uint, isAll bool) {
 		if err := db.DB.Where("account_id = ?", account).First(&teacher).Error; err != nil {
 			return []uint{}, false
 		}
-		db.DB.Model(&models.ClassroomTeacher{}).Where("teacher_id = ?", teacher.TeacherID).Pluck("classroom_id", &ids)
+		// Scope by the rooms the teacher actually teaches (classes.teacher_id) — the
+		// SAME relationship actorRoomScope uses — so stats/overview, classes-today
+		// and reports all agree for a teacher (ClassroomTeacher seed can diverge).
+		db.DB.Model(&models.Class{}).Where("teacher_id = ?", teacher.TeacherID).Distinct("classroom_id").Pluck("classroom_id", &ids)
 		return ids, false
 	}
 	// admin and student may view all classrooms (students read-only via UI).
@@ -337,6 +341,8 @@ type SessionStat struct {
 	ClassroomID   uint    `json:"classroom_id"`
 	ClassroomName string  `json:"classroom_name"`
 	Subject       string  `json:"subject"`
+	TeacherID     uint    `json:"teacher_id"`
+	TeacherName   string  `json:"teacher_name"`
 	Period        int     `json:"period"`
 	StartMin      int     `json:"start_min"` // minutes from midnight — clock-time axis + period ordering
 	EndMin        int     `json:"end_min"`
@@ -412,13 +418,20 @@ func computeBySession(ids []uint, date, weekday string) []SessionStat {
 	for _, r := range rooms {
 		roomName[r.ClassroomID] = r.ClassroomName
 	}
+	teacherName := map[uint]string{}
+	var ts []models.Teacher
+	db.DB.Find(&ts)
+	for _, t := range ts {
+		teacherName[t.TeacherID] = t.TeacherName
+	}
 
 	out := make([]SessionStat, 0, len(classes))
 	for _, cl := range classes {
 		ended := !isToday || m >= cl.EndMin // informational (status chip) only
 		ss := SessionStat{
 			ClassID: cl.ClassID, ClassroomID: cl.ClassroomID, ClassroomName: roomName[cl.ClassroomID],
-			Subject: cl.Subject, Period: cl.Period, Ended: ended,
+			Subject: cl.Subject, TeacherID: cl.TeacherID, TeacherName: teacherName[cl.TeacherID],
+			Period: cl.Period, Ended: ended,
 			StartMin: cl.StartMin, EndMin: cl.EndMin, AllDay: cl.EndMin-cl.StartMin >= 1380,
 		}
 		for _, sid := range roster[cl.ClassID] {
@@ -444,6 +457,42 @@ func computeBySession(ids []uint, date, weekday string) []SessionStat {
 		out = append(out, ss)
 	}
 	return out
+}
+
+// HandleClassesToday returns the caller's classes for TODAY up to the current
+// moment, split into "ongoing" and "ended" (upcoming + empty classes omitted),
+// each with that class's live attendance. Powers the dashboard "classes today" view.
+func HandleClassesToday(c *gin.Context) {
+	ids, isAll := scopedClassroomIDs(c)
+	now := nowVN()
+	today := now.Format("2006-01-02")
+	weekday := now.Weekday().String()
+	m := minutesOf(now)
+	hhmm := func(x int) string { return fmt.Sprintf("%02d:%02d", x/60, x%60) }
+
+	type classView struct {
+		SessionStat
+		Time   string `json:"time"`   // "HH:MM–HH:MM"
+		Status string `json:"status"` // ongoing | ended
+	}
+	ongoing, ended := []classView{}, []classView{}
+	for _, s := range computeBySession(ids, today, weekday) {
+		if s.Enrolled == 0 || m < s.StartMin {
+			continue // skip empty mock classes + not-yet-started (show "up to now")
+		}
+		cv := classView{SessionStat: s, Time: hhmm(s.StartMin) + "–" + hhmm(s.EndMin)}
+		if m >= s.EndMin {
+			cv.Status = "ended"
+			ended = append(ended, cv)
+		} else {
+			cv.Status = "ongoing"
+			ongoing = append(ongoing, cv)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"scope": c.GetString("role"), "is_all": isAll,
+		"as_of": now.Format("15:04"), "ongoing": ongoing, "ended": ended,
+	})
 }
 
 // HandleAttendanceReportExport streams the attendance report (scoped to the
@@ -496,7 +545,7 @@ func HandleAttendanceReportExport(c *gin.Context) {
 				rows = append(rows, []string{
 					ds, r.ClassroomName, r.Subject,
 					strconv.Itoa(r.Enrolled), strconv.Itoa(r.Present), strconv.Itoa(r.Late),
-					strconv.Itoa(r.Excused), strconv.Itoa(r.Absent), strconv.Itoa(int(r.Rate * 100)),
+					strconv.Itoa(r.Excused), strconv.Itoa(r.Absent), strconv.Itoa(int(math.Round(r.Rate * 100))),
 				})
 			}
 		}

@@ -188,6 +188,7 @@ export default function Leaves() {
                   <TableRow>
                     {isStaff && <TableCell>Học sinh</TableCell>}
                     <TableCell>Ngày nghỉ</TableCell>
+                    <TableCell>Lớp / Phòng / Giờ vắng</TableCell>
                     <TableCell>Lý do</TableCell>
                     <TableCell>Trạng thái</TableCell>
                     {isStaff && <TableCell align="right">Duyệt</TableCell>}
@@ -200,6 +201,20 @@ export default function Leaves() {
                       <TableRow key={r.id} hover>
                         {isStaff && <TableCell>{r.student_name} <Typography component="span" variant="caption" color="text.secondary">#{r.student_id}</Typography></TableCell>}
                         <TableCell>{r.date}</TableCell>
+                        <TableCell>
+                          {Array.isArray(r.classes) && r.classes.length ? (
+                            <Stack spacing={0.5}>
+                              {r.classes.map((cl, i) => (
+                                <Stack key={i} direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                                  <Chip size="small" variant="outlined" color="primary" label={cl.classroom} />
+                                  <Typography variant="caption">{cl.subject} · Tiết {cl.period} · {cl.time}</Typography>
+                                </Stack>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">—</Typography>
+                          )}
+                        </TableCell>
                         <TableCell>{r.reason || '—'}</TableCell>
                         <TableCell><Chip size="small" color={s.color} label={s.label} /></TableCell>
                         {isStaff && (

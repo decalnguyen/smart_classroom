@@ -107,13 +107,29 @@ func HandleAttendanceScan(c *gin.Context) {
 			Where("class_id = ? AND student_id = ?", class.ClassID, st.StudentID).
 			Count(&enrolledCount)
 		if enrolledCount == 0 {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":        fmt.Sprintf("Sinh viên %s (%s) không thuộc lớp %s đang học tại phòng này", st.StudentName, req.MSSV, class.Subject),
+			// Recognized, but not on THIS room's roster for the period in session now.
+			// Surface the student's actual nearest class so they know where to go.
+			msg := fmt.Sprintf("%s (%s) không có trong danh sách lớp %s tại phòng này lúc này.",
+				st.StudentName, req.MSSV, class.Subject)
+			resp := gin.H{
 				"code":         "not_enrolled",
 				"mssv":         req.MSSV,
 				"student_name": st.StudentName,
 				"subject":      class.Subject,
-			})
+			}
+			if nc, ok := nearestScheduleForStudent(st.StudentID, now); ok {
+				relLabel := "sắp tới"
+				if nc.Rel == "ongoing" {
+					relLabel = "đang diễn ra"
+				}
+				msg += fmt.Sprintf(" Lịch gần nhất: %s tại %s, %s %s (%s).",
+					nc.Subject, nc.Classroom, nc.DayVN, nc.Time, relLabel)
+				resp["nearest_class"] = nc
+			} else {
+				msg += " Sinh viên không có lịch học nào trong tuần."
+			}
+			resp["error"] = msg
+			c.JSON(http.StatusConflict, resp)
 			return
 		}
 		req.StudentID = st.StudentID

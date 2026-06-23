@@ -49,8 +49,13 @@ export default function Audit() {
             <ToggleButton value="leave_request">Đơn nghỉ</ToggleButton>
             <ToggleButton value="enrollment">Ghi danh</ToggleButton>
             <ToggleButton value="classroom">Phòng học</ToggleButton>
+            <ToggleButton value="classroom_teacher">Phân công GV</ToggleButton>
             <ToggleButton value="student">Học sinh</ToggleButton>
             <ToggleButton value="teacher">Giáo viên</ToggleButton>
+            <ToggleButton value="holiday">Ngày lễ</ToggleButton>
+            <ToggleButton value="makeup">Buổi bù</ToggleButton>
+            <ToggleButton value="building">Toà nhà</ToggleButton>
+            <ToggleButton value="face_review">Duyệt khuôn mặt</ToggleButton>
           </ToggleButtonGroup>
         }
       />

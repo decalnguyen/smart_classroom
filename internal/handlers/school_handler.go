@@ -397,6 +397,9 @@ func HandleGetSchedules(c *gin.Context) {
 				if _, ok := weekly[cl.DayOfWeek]; !ok {
 					continue
 				}
+				if cl.EndMin-cl.StartMin >= 600 { // skip synthetic all-day demo class
+					continue
+				}
 				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
 					"time":     fmt.Sprintf("%02d:%02d - %02d:%02d", cl.StartMin/60, cl.StartMin%60, cl.EndMin/60, cl.EndMin%60),
 					"title":    cl.Subject,
@@ -422,6 +425,9 @@ func HandleGetSchedules(c *gin.Context) {
 			}
 			for _, cl := range classes {
 				if _, ok := weekly[cl.DayOfWeek]; !ok {
+					continue
+				}
+				if cl.EndMin-cl.StartMin >= 600 { // skip synthetic all-day demo class
 					continue
 				}
 				weekly[cl.DayOfWeek] = append(weekly[cl.DayOfWeek], gin.H{
@@ -488,12 +494,16 @@ func HandlePutSchedule(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Schedule not found"})
 		return
 	}
+	origID := schedule.ID
 
 	// Parse the updated data
 	if err := c.BindJSON(&schedule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
+	// Re-pin identity + owner so a malicious body can't move the row or reassign ownership.
+	schedule.ID = origID
+	schedule.AccountID = accountID
 
 	if err := db.DB.Save(&schedule).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update schedule"})

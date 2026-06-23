@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"smart_classroom/internal/db"
@@ -48,6 +49,8 @@ func HandlePostClassroomTeacher(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assign"})
 		return
 	}
+	writeAudit(c, "create", "classroom_teacher", uintStr(req.ClassroomID),
+		fmt.Sprintf("Phân công GV %d cho phòng %d", req.TeacherID, req.ClassroomID))
 	c.JSON(http.StatusOK, gin.H{"message": "Đã phân công"})
 }
 
@@ -64,5 +67,7 @@ func HandleDeleteClassroomTeacher(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy phân công"})
 		return
 	}
+	writeAudit(c, "delete", "classroom_teacher", uintStr(classroomID),
+		fmt.Sprintf("Gỡ phân công GV %d khỏi phòng %d", teacherID, classroomID))
 	c.JSON(http.StatusOK, gin.H{"message": "Đã gỡ phân công"})
 }

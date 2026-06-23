@@ -344,11 +344,21 @@ export default function Sensors() {
         title="Cảm biến & Thiết bị"
         subtitle={isAdmin ? 'Theo dõi và điều khiển thiết bị trong lớp' : 'Chỉ hiển thị phòng & khung giờ theo lịch dạy/học của bạn'}
         action={
-          <Chip
-            label={online ? 'Trực tuyến' : 'Ngoại tuyến'}
-            color={online ? 'success' : 'default'}
-            variant={online ? 'filled' : 'outlined'}
-          />
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <TextField
+              select size="small" label="Phòng" value={room}
+              onChange={(e) => setRoom(e.target.value)} sx={{ minWidth: 120 }}
+            >
+              {rooms.map((r) => (
+                <MenuItem key={r} value={r}>{r}</MenuItem>
+              ))}
+            </TextField>
+            <Chip
+              label={online ? 'Trực tuyến' : 'Ngoại tuyến'}
+              color={online ? 'success' : 'default'}
+              variant={online ? 'filled' : 'outlined'}
+            />
+          </Stack>
         }
       />
 
@@ -460,25 +470,15 @@ export default function Sensors() {
       {canControl && (
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
-              <Box>
-                <Typography variant="h6">Điều khiển thiết bị</Typography>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Chọn mức 0–3 (0 = tắt; quạt: 1–3 là tốc độ) → gửi lệnh MQTT tới thiết bị
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Tự động tắt đèn/quạt khi phòng không có tiết (theo thời khóa biểu).
-                </Typography>
-              </Box>
-              <TextField
-                select size="small" label="Phòng" value={room}
-                onChange={(e) => setRoom(e.target.value)} sx={{ minWidth: 120 }}
-              >
-                {rooms.map((r) => (
-                  <MenuItem key={r} value={r}>{r}</MenuItem>
-                ))}
-              </TextField>
-            </Stack>
+            <Box>
+              <Typography variant="h6">Điều khiển thiết bị — {room}</Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Chọn mức 0–3 (0 = tắt; quạt: 1–3 là tốc độ) → gửi lệnh MQTT tới thiết bị
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Tự động tắt đèn/quạt khi phòng không có tiết (theo thời khóa biểu).
+              </Typography>
+            </Box>
             <Box
               sx={{
                 display: 'grid',

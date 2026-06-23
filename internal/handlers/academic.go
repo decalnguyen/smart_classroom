@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -62,6 +63,91 @@ func findOngoingClass(classroomID uint) (models.Class, bool) {
 		return cl, true
 	}
 	return models.Class{}, false
+}
+
+// weekday string (Go's time.Weekday().String()) → index (Sunday=0) and Vietnamese label.
+var weekdayIdx = map[string]int{
+	"Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3,
+	"Thursday": 4, "Friday": 5, "Saturday": 6,
+}
+var weekdayVN = map[string]string{
+	"Monday": "Thứ 2", "Tuesday": "Thứ 3", "Wednesday": "Thứ 4",
+	"Thursday": "Thứ 5", "Friday": "Thứ 6", "Saturday": "Thứ 7", "Sunday": "Chủ nhật",
+}
+
+// NearestClass describes the student's enrolled class closest in time to a moment,
+// used to explain a wrong-room/wrong-time scan: "you're not on this room's roster
+// now — your nearest class is X at room Y, <day> HH:MM–HH:MM".
+type NearestClass struct {
+	ClassID   uint   `json:"class_id"`
+	Subject   string `json:"subject"`
+	Classroom string `json:"classroom"`
+	Day       string `json:"day"`
+	DayVN     string `json:"day_vn"`
+	StartMin  int    `json:"start_min"`
+	EndMin    int    `json:"end_min"`
+	Time      string `json:"time"`
+	Rel       string `json:"rel"` // ongoing | upcoming
+}
+
+// nearestScheduleForStudent finds the enrolled class closest in time to `now`,
+// searching today first then forward across the week (wraps to next week if a
+// class already ended today). All-day demo classes (>= 600 min) are skipped so a
+// real period surfaces. Returns ok=false if the student has no real classes.
+func nearestScheduleForStudent(studentID uint, now time.Time) (NearestClass, bool) {
+	type row struct {
+		ClassID   uint
+		Subject   string
+		Classroom string
+		Day       string
+		StartMin  int
+		EndMin    int
+	}
+	var rows []row
+	db.DB.Table("class_students cs").
+		Select("c.class_id, c.subject, cr.classroom_name as classroom, c.day_of_week as day, c.start_min, c.end_min").
+		Joins("JOIN classes c ON c.class_id = cs.class_id").
+		Joins("JOIN classrooms cr ON cr.classroom_id = c.classroom_id").
+		Where("cs.student_id = ?", studentID).
+		Scan(&rows)
+
+	todayIdx := int(now.Weekday())
+	m := minutesOf(now)
+	best := NearestClass{}
+	bestDist := 1 << 30
+	found := false
+	for _, r := range rows {
+		if r.EndMin-r.StartMin >= 600 { // skip all-day demo classes
+			continue
+		}
+		ci, ok := weekdayIdx[r.Day]
+		if !ok {
+			continue
+		}
+		dayOffset := (ci - todayIdx + 7) % 7
+		rel := "upcoming"
+		dist := dayOffset*1440 + r.StartMin - m
+		if dayOffset == 0 {
+			switch {
+			case m >= r.StartMin && m < r.EndMin:
+				dist, rel = 0, "ongoing"
+			case m < r.StartMin:
+				dist, rel = r.StartMin-m, "upcoming"
+			default: // already ended today → next occurrence is next week
+				dist, rel = 7*1440+r.StartMin-m, "upcoming"
+			}
+		}
+		if !found || dist < bestDist {
+			found, bestDist = true, dist
+			best = NearestClass{
+				ClassID: r.ClassID, Subject: r.Subject, Classroom: r.Classroom,
+				Day: r.Day, DayVN: weekdayVN[r.Day], StartMin: r.StartMin, EndMin: r.EndMin,
+				Time: fmt.Sprintf("%02d:%02d–%02d:%02d", r.StartMin/60, r.StartMin%60, r.EndMin/60, r.EndMin%60),
+				Rel:  rel,
+			}
+		}
+	}
+	return best, found
 }
 
 // checkinStatus applies the late policy: present within grace, else late.

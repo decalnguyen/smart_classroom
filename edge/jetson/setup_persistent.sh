@@ -30,10 +30,12 @@ VENV="$HOME/venv"
 PY="$VENV/bin/python"
 
 # ---- tweak these to your environment (or pre-export before running) ----
-BACKEND_URL="${BACKEND_URL:-http://192.168.2.16:8091}"   # the Go server
+BACKEND_URL="${BACKEND_URL:-http://192.168.2.13:8091}"   # the Go server
 DEVICE_API_KEY="${DEVICE_API_KEY:-camtok-1}"             # MUST match server .env
 CLASSROOM_ID="${CLASSROOM_ID:-1}"
 CAMERA_SRC="${CAMERA_SRC:-0}"
+SHOW_WINDOW="${SHOW_WINDOW:-1}"                          # 1 = kiosk window on attached monitor
+BANNER_SECONDS="${BANNER_SECONDS:-8}"                    # how long the result banner stays
 
 echo "==> [1/5] System prep: swap + NTP"
 if ! sudo swapon --show | grep -q /swapfile; then
@@ -107,11 +109,13 @@ else
   echo "       scp it from the Mac, then re-run, or copy a faiss.index built with faiss 1.7.4."
 fi
 
-echo "==> [5/5] systemd service (auto-start on boot)"
+echo "==> [5/5] systemd service (kiosk on boot, headless fallback)"
+# Starts after the graphical session so DISPLAY=:0 exists (needs desktop auto-login).
+# If no display is available, recognize_service.py falls back to headless (still records).
 sudo tee /etc/systemd/system/edge.service >/dev/null <<EOF
 [Unit]
-Description=Smart Classroom Edge (face recognition)
-After=network-online.target
+Description=Smart Classroom Edge (face recognition kiosk)
+After=graphical.target network-online.target
 Wants=network-online.target
 
 [Service]
@@ -124,12 +128,17 @@ Environment=CAMERA_SRC=$CAMERA_SRC
 Environment=INDEX_PATH=$MODELS/faiss.index
 Environment=IDMAP_PATH=$MODELS/id_map.json
 Environment=NO_ALBUMENTATIONS_UPDATE=1
+Environment=SHOW_WINDOW=$SHOW_WINDOW
+Environment=BANNER_SECONDS=$BANNER_SECONDS
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$HOME/.Xauthority
+ExecStartPre=/bin/sh -c 'xhost +SI:localuser:$USER >/dev/null 2>&1 || true'
 ExecStart=$PY $EDGE_DIR/recognize_service.py
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 
 sudo systemctl daemon-reload
