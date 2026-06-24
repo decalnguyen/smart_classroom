@@ -75,24 +75,61 @@ func SeedRealStudents() {
 		StudentID uint
 		MSSV      string
 		Name      string
-		Room      string // classroom_name
+		Room      string // classroom_name (camera demo room)
 	}
+	// Students whose faces are in the edge gallery (NhanDangMSSV/models/id_map.json:
+	// MSSV 22520000..22520018, 22520707, 22521491). Each is enrolled EXCLUSIVELY in
+	// its camera room's all-day demo class, so the room's report shows exactly these
+	// students (not "lượt" summed across mock tiết).
 	real := []entry{
-		{StudentID: 22521491, MSSV: "22521491", Name: "Nguyễn Ngô Nhật Toàn", Room: "A101"},
-		{StudentID: 22520707, MSSV: "22520707", Name: "Nguyễn Trường Anh Kiện", Room: "A101"},
+		{22521491, "22521491", "Nguyễn Ngô Nhật Toàn", "A101"},
+		// 19 newly face-enrolled students → A101 (2 named, the rest mocked).
+		{22520000, "22520000", "Trần Văn Hùng", "A101"},
+		{22520001, "22520001", "Nguyễn Văn An", "A101"},
+		{22520002, "22520002", "Lê Thị Hồng", "A101"},
+		{22520003, "22520003", "Phạm Quốc Bảo", "A101"},
+		{22520004, "22520004", "Nguyễn Minh Ánh", "A101"},
+		{22520005, "22520005", "Võ Thị Lan", "A101"},
+		{22520006, "22520006", "Đặng Hoàng Long", "A101"},
+		{22520007, "22520007", "Bùi Thị Mai", "A101"},
+		{22520008, "22520008", "Hồ Văn Nam", "A101"},
+		{22520009, "22520009", "Ngô Thị Thu", "A101"},
+		{22520010, "22520010", "Dương Quang Huy", "A101"},
+		{22520011, "22520011", "Trịnh Thị Ngọc", "A101"},
+		{22520012, "22520012", "Cao Quang Minh", "A101"},
+		{22520013, "22520013", "Đỗ Văn Phúc", "A101"},
+		{22520014, "22520014", "Lý Thị Hương", "A101"},
+		{22520015, "22520015", "Vũ Đình Khôi", "A101"},
+		{22520016, "22520016", "Phan Thị Kim", "A101"},
+		{22520017, "22520017", "Trương Văn Tài", "A101"},
+		{22520018, "22520018", "Mai Thị Yến", "A101"},
+		// Moved to its own camera room A102.
+		{22520707, "22520707", "Nguyễn Trường Anh Kiện", "A102"},
 	}
 
-	// Ensure A101 has an ALL-DAY demo class EVERY weekday (class_id 9001..9007) so
-	// the camera demo always finds an ongoing class — including outside the regular
-	// 07:00–16:00 periods. Created before the enroll loop so real students join them.
-	if cr := (models.Classroom{}); db.DB.Where("classroom_name = ?", "A101").First(&cr).Error == nil {
-		wide0 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-		wide1 := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
-		days := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+	// Each camera room gets an ALL-DAY demo class EVERY weekday so the camera always
+	// finds an ongoing class — even outside the regular 07:00–16:00 periods. Created
+	// before the enroll loop so the face-enrolled students join them. (A101: 9001..9007,
+	// A102: 9101..9107.)
+	demoRooms := []struct {
+		Name string
+		Base uint
+	}{
+		{"A101", 9001},
+		{"A102", 9101},
+	}
+	wide0 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	wide1 := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	days := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+	for _, dr := range demoRooms {
+		var cr models.Classroom
+		if db.DB.Where("classroom_name = ?", dr.Name).First(&cr).Error != nil {
+			continue
+		}
 		demos := make([]models.Class, 0, len(days))
 		for i, dow := range days {
 			demos = append(demos, models.Class{
-				ClassID: uint(9001 + i), Subject: "Demo - Trí tuệ nhân tạo",
+				ClassID: dr.Base + uint(i), Subject: "Demo - Trí tuệ nhân tạo",
 				ClassroomID: cr.ClassroomID, SemesterID: 1, TeacherID: 1,
 				Period: 9, DayOfWeek: dow, StartMin: 0, EndMin: 1439,
 				StartTime: wide0, EndTime: wide1, CreatedAt: nowVN(), UpdatedAt: nowVN(),
@@ -116,17 +153,16 @@ func SeedRealStudents() {
 			continue
 		}
 
-		// Find all classes in the assigned classroom.
 		var cr models.Classroom
 		if err := db.DB.Where("classroom_name = ?", e.Room).First(&cr).Error; err != nil {
 			log.Printf("SeedRealStudents: classroom %s not found", e.Room)
 			continue
 		}
-		// Only the all-day DEMO classes (period 9) — not the mock regular tiết — so
-		// A101's report shows the 2 real students, not "lượt" summed across 6 sessions.
+		// Enroll ONLY in the room's all-day DEMO classes (period 9, span >= 600 min) —
+		// not mock regular tiết NOR the short evening "Tối" class — so the room's report
+		// shows these students once per day, never summed "lượt" or phantom-absent.
 		var classes []models.Class
-		db.DB.Where("classroom_id = ? AND period = ?", cr.ClassroomID, 9).Find(&classes)
-
+		db.DB.Where("classroom_id = ? AND period = ? AND end_min - start_min >= ?", cr.ClassroomID, 9, 600).Find(&classes)
 		enrollments := make([]models.ClassStudent, 0, len(classes))
 		for _, cl := range classes {
 			enrollments = append(enrollments, models.ClassStudent{ClassID: cl.ClassID, StudentID: e.StudentID})
@@ -137,30 +173,42 @@ func SeedRealStudents() {
 				log.Printf("SeedRealStudents: enroll %s: %v", e.MSSV, err)
 			}
 		}
-		log.Printf("SeedRealStudents: %s (%s) enrolled in %d classes at %s", e.Name, e.MSSV, len(classes), e.Room)
+		// Exclusive: a face-enrolled student belongs ONLY to its camera room's all-day
+		// demo class. Remove every other enrollment — other rooms (handles moves, e.g.
+		// Kiện A101→A102) AND same-room non-demo classes (e.g. the short "Tối" class) —
+		// so reports stay clean (no "lượt", no phantom absences).
+		db.DB.Exec(`DELETE FROM class_students WHERE student_id = ? AND class_id NOT IN
+			(SELECT class_id FROM classes WHERE classroom_id = ? AND period = 9 AND end_min - start_min >= 600)`,
+			e.StudentID, cr.ClassroomID)
+		log.Printf("SeedRealStudents: %s (%s) → %s (%d demo classes)", e.Name, e.MSSV, e.Room, len(classes))
 	}
 
-	// Camera demo: room A101 must contain ONLY the real (face-enrolled) students.
-	// Strip mock enrollments + their attendance from A101, then delete the mock
-	// students that are now orphaned (in no class, no linked account). Idempotent.
-	realIDs := make([]uint, 0, len(real))
+	// Build ID sets: all face-enrolled students, plus those assigned to A101.
+	allRealIDs := make([]uint, 0, len(real))
+	roomReal := map[string][]uint{}
 	for _, e := range real {
-		realIDs = append(realIDs, e.StudentID)
+		allRealIDs = append(allRealIDs, e.StudentID)
+		roomReal[e.Room] = append(roomReal[e.Room], e.StudentID)
 	}
+
+	// Camera demo: room A101 must contain ONLY its assigned face-enrolled students.
+	// Strip mock enrollments + their attendance from A101 (A102 keeps its regular
+	// mock classes — only Kiện was added there). Then delete orphaned mock students.
+	a101IDs := roomReal["A101"]
 	var a101 models.Classroom
-	if err := db.DB.Where("classroom_name = ?", "A101").First(&a101).Error; err == nil {
+	if err := db.DB.Where("classroom_name = ?", "A101").First(&a101).Error; err == nil && len(a101IDs) > 0 {
 		var classIDs []uint
 		db.DB.Model(&models.Class{}).Where("classroom_id = ?", a101.ClassroomID).Pluck("class_id", &classIDs)
 		if len(classIDs) > 0 {
-			db.DB.Where("class_id IN ? AND student_id NOT IN ?", classIDs, realIDs).Delete(&models.ClassStudent{})
+			db.DB.Where("class_id IN ? AND student_id NOT IN ?", classIDs, a101IDs).Delete(&models.ClassStudent{})
 		}
-		db.DB.Where("classroom_id = ? AND student_id NOT IN ?", a101.ClassroomID, realIDs).Delete(&models.Attendance{})
-		// Delete now-orphaned mock students + their dangling leave requests.
-		db.DB.Exec(`DELETE FROM students WHERE (account_id = '' OR account_id IS NULL)
-			AND student_id NOT IN (?) AND student_id NOT IN (SELECT DISTINCT student_id FROM class_students)`, realIDs)
-		db.DB.Exec(`DELETE FROM leave_requests lr WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.student_id = lr.student_id)`)
-		log.Printf("SeedRealStudents: A101 limited to %d real students", len(realIDs))
+		db.DB.Where("classroom_id = ? AND student_id NOT IN ?", a101.ClassroomID, a101IDs).Delete(&models.Attendance{})
 	}
+	// Delete now-orphaned mock students (protecting ALL real students) + dangling leaves.
+	db.DB.Exec(`DELETE FROM students WHERE (account_id = '' OR account_id IS NULL)
+		AND student_id NOT IN (?) AND student_id NOT IN (SELECT DISTINCT student_id FROM class_students)`, allRealIDs)
+	db.DB.Exec(`DELETE FROM leave_requests lr WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.student_id = lr.student_id)`)
+	log.Printf("SeedRealStudents: A101=%d, A102=%d face-enrolled students", len(a101IDs), len(roomReal["A102"]))
 }
 
 // SeedMockData populates a realistic dataset (~10 classrooms, ~70 students each)
@@ -210,7 +258,7 @@ func SeedMockData() {
 		name := fmt.Sprintf("A10%d", i+1)
 		if i >= 5 {
 			building = 2
-			name = fmt.Sprintf("B20%d", i-4)
+			name = fmt.Sprintf("B10%d", i-4)
 		}
 		classrooms = append(classrooms, models.Classroom{
 			ClassroomID:   uint(i + 1),
@@ -608,8 +656,8 @@ func seedSchedules() {
 		rows := []models.Schedule{
 			{AccountID: u.AccountID, Role: a.Role, Title: "Lập trình", Desc: "Phòng thực hành", Room: "A101", Day: "Monday", Time: "07:30"},
 			{AccountID: u.AccountID, Role: a.Role, Title: "Cơ sở dữ liệu", Desc: "Lý thuyết", Room: "A102", Day: "Monday", Time: "09:30"},
-			{AccountID: u.AccountID, Role: a.Role, Title: "Mạng máy tính", Desc: "Lý thuyet", Room: "B201", Day: "Wednesday", Time: "13:00"},
-			{AccountID: u.AccountID, Role: a.Role, Title: "IoT ứng dụng", Desc: "Đồ án", Room: "B202", Day: "Friday", Time: "07:30"},
+			{AccountID: u.AccountID, Role: a.Role, Title: "Mạng máy tính", Desc: "Lý thuyet", Room: "B101", Day: "Wednesday", Time: "13:00"},
+			{AccountID: u.AccountID, Role: a.Role, Title: "IoT ứng dụng", Desc: "Đồ án", Room: "B102", Day: "Friday", Time: "07:30"},
 			{AccountID: u.AccountID, Role: a.Role, Title: "Trí tuệ nhân tạo", Desc: "Seminar", Room: "A103", Day: "Thursday", Time: "15:00"},
 		}
 		db.DB.Create(&rows)

@@ -47,11 +47,12 @@ services:
       # SMOKE_FLOOR/CEILING, TEMP_FLOOR/CEILING, THRESHOLD_CAL_SECONDS, THRESHOLD_AUTOCAL=off.
       SMOKE_THRESHOLD: ${SMOKE_THRESHOLD:-}
       TEMP_THRESHOLD: ${TEMP_THRESHOLD:-}
-      # Uniform room coverage for demos: synthesize telemetry for the real-device
-      # rooms (A101-A103) ONLY while no real ESP32 is publishing (yields by freshness).
-      # Set DEMO_FALLBACK=off once real hardware is attached.
+      # Uniform room coverage for DEMO-only rooms (no real hardware): synthesize
+      # telemetry while no real ESP32 is publishing (yields by freshness). EXCLUDES
+      # the real-hardware rooms A101/A102/B101 — those show real data only (offline
+      # if their device is silent). Set DEMO_FALLBACK=off to disable entirely.
       DEMO_FALLBACK: ${DEMO_FALLBACK:-on}
-      DEMO_FALLBACK_ROOMS: ${DEMO_FALLBACK_ROOMS:-A101,A102,A103}
+      DEMO_FALLBACK_ROOMS: ${DEMO_FALLBACK_ROOMS:-A103,A104,A105}
       SENSOR_FRESH_SECONDS: ${SENSOR_FRESH_SECONDS:-30}
       # Recognition thresholds (match the trained model in NhanDangMSSV/).
       FACE_T_HIGH: ${FACE_T_HIGH:-0.60}

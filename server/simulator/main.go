@@ -179,14 +179,14 @@ func scanLoop(scanURL string, every time.Duration, classrooms []int) {
 	}
 }
 
-// genRooms generates classroom names matching the seed (A101-A105, B201-B205…).
+// genRooms generates classroom names matching the seed (A101-A105, B101-B105…).
 func genRooms(n int) []string {
 	rooms := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		if i < 5 {
 			rooms = append(rooms, fmt.Sprintf("A10%d", i+1))
 		} else {
-			rooms = append(rooms, fmt.Sprintf("B20%d", i-4))
+			rooms = append(rooms, fmt.Sprintf("B10%d", i-4))
 		}
 	}
 	return rooms
@@ -214,10 +214,19 @@ func main() {
 		}
 	}
 
-	// Classrooms with a REAL camera (Jetson) — skip simulated FACE-SCANS so they
-	// don't pollute the real recognition feed. Default: A101 (classroom_id 1).
+	// Classrooms with REAL hardware (camera/ESP32) — skip simulated FACE-SCANS too,
+	// so they're left entirely to the physical devices. Derived from the SAME list
+	// as sensors (SENSOR_EXCLUDE_ROOMS), mapping room name → classroom_id by its
+	// 1-based position in allRooms (matches the seed order: A101=1, A102=2, …
+	// B105=10). Excluded names not in allRooms are simply ignored.
+	// SCAN_EXCLUDE_CLASSROOMS can add extra numeric ids on top.
 	scanExclude := map[int]bool{}
-	for _, s := range strings.Split(env("SCAN_EXCLUDE_CLASSROOMS", "1"), ",") {
+	for i, r := range allRooms {
+		if excluded[r] {
+			scanExclude[i+1] = true
+		}
+	}
+	for _, s := range strings.Split(env("SCAN_EXCLUDE_CLASSROOMS", ""), ",") {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
 			scanExclude[n] = true
 		}

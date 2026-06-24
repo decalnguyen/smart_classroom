@@ -24,6 +24,9 @@ import {
   Snackbar,
   Divider,
   Skeleton,
+  Dialog,
+  DialogContent,
+  IconButton,
 } from '@mui/material'
 import GroupsIcon from '@mui/icons-material/Groups'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
@@ -32,6 +35,7 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import EventBusyIcon from '@mui/icons-material/EventBusy'
 import FaceRetouchingNaturalIcon from '@mui/icons-material/FaceRetouchingNatural'
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom'
+import CloseIcon from '@mui/icons-material/Close'
 import HowToRegIcon from '@mui/icons-material/HowToReg'
 import { useAuth } from '../context/AuthContext'
 import { schoolApi, attendanceApi, apiError } from '../api/client'
@@ -72,6 +76,7 @@ export default function Attendance() {
     () => events.filter((e) => String(e.classroom_id) === String(classroomId)),
     [events, classroomId]
   )
+  const [zoom, setZoom] = useState(null) // recognition whose face image is enlarged (click-to-zoom)
 
   // Load classrooms once.
   useEffect(() => {
@@ -263,7 +268,7 @@ export default function Attendance() {
               description="Hệ thống sẽ tự động cập nhật khi camera nhận diện được học sinh trong phòng này."
             />
           ) : (
-            <Stack spacing={1} sx={{ maxHeight: 240, overflow: 'auto' }}>
+            <Stack spacing={1} sx={{ maxHeight: 300, overflow: 'auto' }}>
               {liveForRoom.slice(0, 15).map((e, i) => (
                 <Stack
                   key={`${e.student_id}-${e._ts}-${i}`}
@@ -271,19 +276,21 @@ export default function Attendance() {
                   alignItems="center"
                   spacing={1.5}
                   flexWrap="wrap"
-                  sx={{
-                    px: 1.5,
-                    py: 1,
-                    borderRadius: 1.5,
-                    bgcolor: 'action.hover',
-                  }}
+                  sx={{ px: 1.5, py: 1, borderRadius: 1.5, bgcolor: 'action.hover' }}
                 >
                   {e.face_image && (
                     <Box
                       component="img"
                       src={`data:image/jpeg;base64,${e.face_image}`}
                       alt={e.student_name}
-                      sx={{ width: 44, height: 44, borderRadius: 1, objectFit: 'cover', flexShrink: 0 }}
+                      title="Nhấn để phóng to"
+                      onClick={() => setZoom(e)}
+                      sx={{
+                        width: 56, height: 56, borderRadius: 1, objectFit: 'cover', flexShrink: 0,
+                        cursor: 'pointer',
+                        transition: 'transform .1s, box-shadow .1s',
+                        '&:hover': { transform: 'scale(1.06)', boxShadow: 3 },
+                      }}
                     />
                   )}
                   {e.attendance_status === 'late' ? (
@@ -303,6 +310,42 @@ export default function Attendance() {
           )}
         </CardContent>
       </Card>
+
+      {/* Click-to-zoom: enlarged face image of a recognition */}
+      <Dialog open={!!zoom} onClose={() => setZoom(null)} maxWidth="sm">
+        <DialogContent sx={{ p: 0, position: 'relative', bgcolor: 'black' }}>
+          <IconButton
+            onClick={() => setZoom(null)}
+            sx={{
+              position: 'absolute', top: 8, right: 8, color: '#fff',
+              bgcolor: 'rgba(0,0,0,0.45)', '&:hover': { bgcolor: 'rgba(0,0,0,0.65)' },
+            }}
+          >
+            <CloseIcon />
+          </IconButton>
+          {zoom?.face_image && (
+            <Box
+              component="img"
+              src={`data:image/jpeg;base64,${zoom.face_image}`}
+              alt={zoom?.student_name}
+              sx={{ display: 'block', width: '100%', maxWidth: '80vw', maxHeight: '70vh', objectFit: 'contain' }}
+            />
+          )}
+          <Box sx={{ p: 2, bgcolor: 'background.paper' }}>
+            <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+              {zoom?.attendance_status === 'late' ? (
+                <Chip size="small" color="warning" label="⏱ Đi muộn" />
+              ) : (
+                <Chip size="small" color="success" label="✓ Có mặt" />
+              )}
+              <Typography variant="h6">{zoom?.student_name}</Typography>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              MSSV {zoom?.mssv} · {zoom?.subject} · {zoom?.detection_time}
+            </Typography>
+          </Box>
+        </DialogContent>
+      </Dialog>
 
       {/* Mark-attendance form (staff only) — scoped to the ongoing class roster */}
       {canEdit && (

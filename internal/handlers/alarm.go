@@ -94,12 +94,32 @@ func EvaluateAndAlert(data models.SenSorData) {
 	triggerBuzzer(data.DeviceID, message)
 }
 
-// triggerBuzzer issues the alarm command to the room's ESP32 buzzer via the MQTT
-// command channel (/{room}/buzzer/cmd). The device subscribes and actuates.
-// (Hardware fail-safe note: a life-safety buzzer should ALSO have a local trip
-// on the ESP32 if the smoke pin crosses threshold, independent of the network —
-// see docs/ARCHITECTURE.md.)
+// triggerBuzzer raises a BUILDING-WIDE alarm: when one room detects danger
+// (fire/gas/heat), EVERY room's buzzer in the SAME building sounds simultaneously,
+// via the MQTT command channel (/{room}/buzzer/cmd). This is the building fire-alarm
+// behaviour — one detector trips, the whole block is alerted. Falls back to just the
+// source room if the building can't be resolved.
+// (Hardware fail-safe note: a life-safety buzzer should ALSO trip locally on the
+// ESP32 if the smoke pin crosses threshold, independent of the network — see
+// docs/ARCHITECTURE.md.)
 func triggerBuzzer(deviceID, reason string) {
-	PublishDeviceCommand(roomOf(deviceID), "buzzer", "on", 1, reason)
-	log.Printf("🚨 ALARM: buzzer command -> /%s/buzzer/cmd (%s)", roomOf(deviceID), reason)
+	src := roomOf(deviceID)
+
+	// Resolve the source room's building, then sound every buzzer in that building.
+	var rooms []string
+	if db.DB != nil {
+		var cr models.Classroom
+		if err := db.DB.Where("classroom_name = ?", src).First(&cr).Error; err == nil {
+			db.DB.Model(&models.Classroom{}).Where("building_id = ?", cr.BuildingID).
+				Order("classroom_name asc").Pluck("classroom_name", &rooms)
+		}
+	}
+	if len(rooms) == 0 {
+		rooms = []string{src} // fallback: at least sound the source room
+	}
+
+	for _, room := range rooms {
+		PublishDeviceCommand(room, "buzzer", "on", 1, reason)
+	}
+	log.Printf("🚨 ALARM toàn toà nhà: %d còi bật (nguồn %s) -> %v (%s)", len(rooms), src, rooms, reason)
 }

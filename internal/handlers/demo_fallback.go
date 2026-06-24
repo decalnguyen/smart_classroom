@@ -11,23 +11,23 @@ import (
 	"smart_classroom/internal/models"
 )
 
-// DemoTelemetryFallback gives the system UNIFORM room coverage for demos without
-// fighting real hardware. The simulator covers A104+ but deliberately excludes the
-// real-ESP32 rooms (A101–A103), so those render empty when no hardware is attached.
-// This job fills the configured rooms with synthetic readings ONLY when no real
-// telemetry has arrived within a freshness window — so:
-//   - a demo without hardware shows non-empty, consistent data across ALL rooms;
-//   - the moment a real ESP32 starts publishing to A101, fresh rows appear and the
-//     fallback automatically YIELDS that room (never competes with/overwrites real data).
+// DemoTelemetryFallback gives DEMO-only rooms (no real hardware) non-empty coverage
+// without fighting real devices. It fills the configured rooms with synthetic
+// readings ONLY when no real telemetry arrived within a freshness window. The
+// real-hardware rooms A101/A102/B101 are deliberately EXCLUDED here (and from the
+// simulator) so their device status reflects REAL data only — offline if silent.
+//   - a demo without hardware shows non-empty data for the demo rooms;
+//   - the moment a real ESP32 publishes to a covered room, the fallback YIELDS it.
 //
 // Default OFF in production logic, but enabled via DEMO_FALLBACK=on (set in
-// docker-compose for the demo). Rooms: DEMO_FALLBACK_ROOMS (default A101,A102,A103);
-// cadence: DEMO_FALLBACK_SECONDS (default 5); freshness: SENSOR_FRESH_SECONDS (default 30).
+// docker-compose for the demo). Rooms: DEMO_FALLBACK_ROOMS (default A103,A104,A105 —
+// demo-only rooms, NOT the real A101/A102/B101); cadence: DEMO_FALLBACK_SECONDS
+// (default 5); freshness: SENSOR_FRESH_SECONDS (default 30).
 func DemoTelemetryFallback() {
 	if strings.ToLower(os.Getenv("DEMO_FALLBACK")) != "on" {
 		return
 	}
-	rooms := splitCSV(envStr("DEMO_FALLBACK_ROOMS", "A101,A102,A103"))
+	rooms := splitCSV(envStr("DEMO_FALLBACK_ROOMS", "A103,A104,A105"))
 	if len(rooms) == 0 {
 		return
 	}

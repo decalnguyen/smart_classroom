@@ -151,12 +151,14 @@ def draw_kiosk(frame, faces_draw, banner):
             d.text((x1 + 5, ty + 1), label, font=_font, fill=(255, 255, 255))
         if banner:
             text, code = banner
-            margin, lh = 18, 36
-            lines = _wrap(d, text, _font_big, w - 2 * margin, max_lines=2)
+            # Smaller font + up to 3 lines so longer server responses (e.g. the
+            # "không thuộc lớp … lịch gần nhất …" message) show fully, not cut by "…".
+            margin, lh = 18, 28
+            lines = _wrap(d, text, _font, w - 2 * margin, max_lines=3)
             bh = lh * len(lines) + 14
             d.rectangle([0, h - bh, w, h], fill=_rgb(code))
             for i, ln in enumerate(lines):
-                d.text((margin, h - bh + 7 + i * lh), ln, font=_font_big, fill=(255, 255, 255))
+                d.text((margin, h - bh + 7 + i * lh), ln, font=_font, fill=(255, 255, 255))
         return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
     # ASCII fallback (no diacritics): trim by character count to avoid overflow.
     for (x1, y1, x2, y2), label, code in faces_draw:

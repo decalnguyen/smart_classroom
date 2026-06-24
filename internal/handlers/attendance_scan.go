@@ -225,7 +225,17 @@ func HandleAttendanceScan(c *gin.Context) {
 		First(&existing).Error == nil {
 		if existing.AttendanceStatus != status {
 			db.DB.Model(&existing).Update("attendance_status", status)
+			existing.AttendanceStatus = status
 		}
+		// Already counted today, but still relay the live recognition (with the face
+		// image) so the real-time panel shows WHO the camera sees right now — otherwise
+		// the feed goes silent after each student's first scan of the day.
+		rabbitmq.Publish("attendance.event", AttendanceEvent{
+			StudentID: student.StudentID, MSSV: student.MSSV, StudentName: student.StudentName,
+			ClassroomID: req.ClassroomID, ClassID: class.ClassID, Subject: class.Subject,
+			Status: existing.AttendanceStatus, Time: now.Format("15:04:05"), Date: dateStr,
+			DeviceID: req.DeviceID, Confidence: confidence, FaceImage: req.FaceImage,
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"message":           fmt.Sprintf("%s (%s) đã điểm danh trước đó lúc %s", student.StudentName, student.MSSV, existing.DetectionTime),
 			"code":              "already_present",

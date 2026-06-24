@@ -20,7 +20,9 @@
 #   3) download buffalo_l (SCRFD + ArcFace) once
 #   4) BUILD faiss.index ON the Jetson from embeddings.pkl  ->  no 1.7.4-vs-1.8
 #      "Index type not recognized" ever again
-#   5) install + start the systemd service (auto-start on boot)
+#   5) kiosk desktop: gdm3 auto-login + disable lock screen / idle-blank / suspend
+#      (only when SHOW_WINDOW=1; set AUTOLOGIN_USER='' to skip)
+#   6) install + start the systemd service (auto-start on boot)
 # ============================================================================
 set -euo pipefail
 
@@ -36,8 +38,9 @@ CLASSROOM_ID="${CLASSROOM_ID:-1}"
 CAMERA_SRC="${CAMERA_SRC:-0}"
 SHOW_WINDOW="${SHOW_WINDOW:-1}"                          # 1 = kiosk window on attached monitor
 BANNER_SECONDS="${BANNER_SECONDS:-8}"                    # how long the result banner stays
+AUTOLOGIN_USER="${AUTOLOGIN_USER:-$USER}"               # kiosk auto-login user ('' to skip step 5)
 
-echo "==> [1/5] System prep: swap + NTP"
+echo "==> [1/6] System prep: swap + NTP"
 if ! sudo swapon --show | grep -q /swapfile; then
   sudo fallocate -l 4G /swapfile
   sudo chmod 600 /swapfile
@@ -47,7 +50,7 @@ if ! sudo swapon --show | grep -q /swapfile; then
 fi
 sudo timedatectl set-ntp true || true
 
-echo "==> [2/5] Python 3.8 venv + pinned packages"
+echo "==> [2/6] Python 3.8 venv + pinned packages"
 if ! command -v python3.8 >/dev/null 2>&1; then
   sudo add-apt-repository ppa:deadsnakes/ppa -y
   sudo apt-get update
@@ -70,7 +73,7 @@ fi
     requests==2.31.0 \
     pillow
 
-echo "==> [3/5] Download buffalo_l model (once)"
+echo "==> [3/6] Download buffalo_l model (once)"
 NO_ALBUMENTATIONS_UPDATE=1 "$PY" - <<'PYEOF'
 from insightface.app import FaceAnalysis
 app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"])
@@ -78,7 +81,7 @@ app.prepare(ctx_id=-1)
 print("buffalo_l ready")
 PYEOF
 
-echo "==> [4/5] Build faiss.index ON the Jetson from embeddings.pkl"
+echo "==> [4/6] Build faiss.index ON the Jetson from embeddings.pkl"
 if [ -f "$MODELS/embeddings.pkl" ]; then
   "$PY" - "$MODELS" <<'PYEOF'
 import os, sys, pickle
@@ -109,7 +112,47 @@ else
   echo "       scp it from the Mac, then re-run, or copy a faiss.index built with faiss 1.7.4."
 fi
 
-echo "==> [5/5] systemd service (kiosk on boot, headless fallback)"
+echo "==> [5/6] Kiosk desktop: auto-login + never lock/blank/suspend"
+# Only when running the on-screen kiosk (SHOW_WINDOW=1) and an auto-login user is set.
+# Lets the attached monitor boot straight to the desktop and never ask for a password.
+if [ "$SHOW_WINDOW" = "1" ] && [ -n "$AUTOLOGIN_USER" ]; then
+  # gdm3 auto-login (this unit uses gdm3). Drop any existing AutomaticLogin* lines
+  # (commented or not), then add fresh ones under [daemon]. Idempotent.
+  if [ -f /etc/gdm3/custom.conf ]; then
+    sudo sed -i '/^[#[:space:]]*AutomaticLogin/d' /etc/gdm3/custom.conf
+    sudo sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=$AUTOLOGIN_USER" /etc/gdm3/custom.conf
+    echo "    gdm3 auto-login = $AUTOLOGIN_USER"
+  else
+    echo "    !! /etc/gdm3/custom.conf not found — set auto-login manually for your display manager."
+  fi
+  # System-wide dconf: disable the lock screen, idle-blank, dim and auto-suspend.
+  # (Setting these with gsettings over SSH would NOT reach the graphical session;
+  # the dconf system DB does, and applies to the auto-login session.)
+  sudo mkdir -p /etc/dconf/db/local.d /etc/dconf/profile
+  printf 'user-db:user\nsystem-db:local\n' | sudo tee /etc/dconf/profile/user >/dev/null
+  sudo tee /etc/dconf/db/local.d/00-kiosk-nolock >/dev/null <<'DCONF'
+[org/gnome/desktop/lockdown]
+disable-lock-screen=true
+
+[org/gnome/desktop/screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+idle-dim=false
+sleep-inactive-ac-type='nothing'
+DCONF
+  sudo dconf update
+  sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
+  echo "    lock screen disabled, idle-blank off, suspend masked"
+else
+  echo "    skipped (SHOW_WINDOW=$SHOW_WINDOW, AUTOLOGIN_USER='$AUTOLOGIN_USER')"
+fi
+
+echo "==> [6/6] systemd service (kiosk on boot, headless fallback)"
 # Starts after the graphical session so DISPLAY=:0 exists (needs desktop auto-login).
 # If no display is available, recognize_service.py falls back to headless (still records).
 sudo tee /etc/systemd/system/edge.service >/dev/null <<EOF
